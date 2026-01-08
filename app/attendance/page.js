@@ -32,11 +32,13 @@ import {
   Home,
   Briefcase,
   Coffee,
-  Activity
+  Activity,
+  ChevronLeft,
+  ChevronRight as ChevronRightIcon
 } from "lucide-react";
 import { Toaster, toast } from "react-hot-toast";
 
-export default function AttendancePage({ userId }) {
+export default function page({ userId }) {
   const router = useRouter();
   const [attendance, setAttendance] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -46,7 +48,6 @@ export default function AttendancePage({ userId }) {
     endDate: new Date().toISOString().split('T')[0]
   });
   const [clockDetails, setClockDetails] = useState(() => {
-    // Check localStorage for stored clock details
     if (typeof window !== "undefined") {
       const storedDetails = localStorage.getItem("attendanceClockDetails");
       if (storedDetails) {
@@ -61,27 +62,26 @@ export default function AttendancePage({ userId }) {
   });
   
   const [showRecentDetails, setShowRecentDetails] = useState(() => {
-    // Check localStorage for visibility preference
     if (typeof window !== "undefined") {
       return localStorage.getItem("attendanceShowDetails") === "true";
     }
     return false;
   });
   
-  // User role state
   const [userRole, setUserRole] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [userData, setUserData] = useState(null);
   
-  // Clock status for current day with localStorage persistence
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+  
   const [todayStatus, setTodayStatus] = useState(() => {
-    // Initialize from localStorage
     if (typeof window !== "undefined") {
       const storedToday = localStorage.getItem("attendanceTodayStatus");
       const todayDate = new Date().toDateString();
       const storedDate = localStorage.getItem("attendanceDate");
       
-      // Reset if it's a new day
       if (storedDate !== todayDate) {
         localStorage.setItem("attendanceDate", todayDate);
         localStorage.removeItem("attendanceTodayStatus");
@@ -123,7 +123,6 @@ export default function AttendancePage({ userId }) {
     };
   });
 
-  // Save to localStorage when todayStatus changes
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem("attendanceTodayStatus", JSON.stringify(todayStatus));
@@ -131,21 +130,89 @@ export default function AttendancePage({ userId }) {
     }
   }, [todayStatus]);
 
-  // Save clockDetails to localStorage
   useEffect(() => {
     if (typeof window !== "undefined" && clockDetails) {
       localStorage.setItem("attendanceClockDetails", JSON.stringify(clockDetails));
     }
   }, [clockDetails]);
 
-  // Save showRecentDetails preference to localStorage
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem("attendanceShowDetails", showRecentDetails.toString());
     }
   }, [showRecentDetails]);
 
-  // Helper function to get user type from localStorage
+  // Auto Clock-Out at 6:30 PM
+  useEffect(() => {
+    const checkAutoClockOut = () => {
+      const now = new Date();
+      const currentHours = now.getHours();
+      const currentMinutes = now.getMinutes();
+      
+      // Check if it's 6:30 PM (18:30)
+      if (currentHours === 18 && currentMinutes === 30) {
+        if (todayStatus.clockedIn && !todayStatus.clockedOut && userRole === "employee") {
+          handleAutoClockOut();
+        }
+      }
+    };
+    
+    const interval = setInterval(checkAutoClockOut, 60000); // Check every minute
+    
+    return () => clearInterval(interval);
+  }, [todayStatus, userRole]);
+
+  const handleAutoClockOut = async () => {
+    if (userRole !== "employee") return;
+    
+    try {
+      const token = getToken();
+      
+      if (!token) {
+        return;
+      }
+
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auto-clock-out`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          timestamp: new Date().toISOString(),
+          location: "Office - Auto",
+          device: navigator.userAgent,
+          autoClockOut: true
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        const newStatus = {
+          ...todayStatus,
+          clockedOut: true,
+          clockOutTime: data.attendance?.clockOut || new Date().toISOString(),
+          status: "Present (Auto)"
+        };
+        setTodayStatus(newStatus);
+        
+        if (data.attendance) {
+          setClockDetails(data.attendance);
+        }
+        
+        toast.success(`✓ Auto Clock Out at 6:30 PM successful`);
+        
+        // Refresh data
+        await fetchTodayStatus();
+        const roleInfo = { role: userRole, isAdmin, userData };
+        await fetchSummary(roleInfo);
+      }
+    } catch (err) {
+      console.error("Auto clock out error:", err);
+    }
+  };
+
   const getUserType = () => {
     if (typeof window !== "undefined") {
       const adminToken = localStorage.getItem("adminToken");
@@ -160,7 +227,6 @@ export default function AttendancePage({ userId }) {
     return null;
   };
 
-  // Get token based on user type
   const getToken = () => {
     const userType = getUserType();
     if (userType === "admin") {
@@ -171,7 +237,6 @@ export default function AttendancePage({ userId }) {
     return null;
   };
 
-  // Check for midnight reset
   useEffect(() => {
     const checkMidnightReset = () => {
       const now = new Date();
@@ -179,7 +244,6 @@ export default function AttendancePage({ userId }) {
       const storedDate = localStorage.getItem("attendanceDate");
       
       if (storedDate !== currentDate) {
-        // New day - reset local storage
         localStorage.setItem("attendanceDate", currentDate);
         localStorage.removeItem("attendanceTodayStatus");
         localStorage.removeItem("attendanceClockDetails");
@@ -199,7 +263,6 @@ export default function AttendancePage({ userId }) {
         
         toast.success("New day! Attendance reset.");
         
-        // Refresh data
         if (userRole === "employee") {
           fetchTodayStatus();
         }
@@ -210,20 +273,18 @@ export default function AttendancePage({ userId }) {
       }
     };
     
-    // Check every minute
     const interval = setInterval(checkMidnightReset, 60000);
     
     return () => clearInterval(interval);
   }, [userRole, isAdmin, userData]);
 
-  // Fetch user profile and role
   const fetchUserProfile = async () => {
     try {
       const userType = getUserType();
       const token = getToken();
       
       if (!token) {
-        router.push("/login");
+        router.push("/");
         return { role: "employee", isAdmin: false, userData: null };
       }
 
@@ -239,12 +300,8 @@ export default function AttendancePage({ userId }) {
       });
 
       if (response.status === 401) {
-        localStorage.removeItem("adminToken");
-        localStorage.removeItem("employeeToken");
-        localStorage.removeItem("attendanceTodayStatus");
-        localStorage.removeItem("attendanceClockDetails");
-        localStorage.removeItem("attendanceShowDetails");
-        router.push("/login");
+        localStorage.clear();
+        router.push("/");
         return { role: "employee", isAdmin: false, userData: null };
       }
 
@@ -276,8 +333,11 @@ export default function AttendancePage({ userId }) {
         return;
       }
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/attendance/today`, {
-        headers: { Authorization: `Bearer ${token}` }
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/today`, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        }
       });
 
       if (response.ok) {
@@ -297,26 +357,30 @@ export default function AttendancePage({ userId }) {
         if (data.attendance) {
           setClockDetails(data.attendance);
         }
+      } else if (response.status === 401) {
+        localStorage.clear();
+        router.push("/");
       }
     } catch (error) {
       console.error("Failed to fetch today's status:", error);
     }
   }, []);
 
-  // ================== Fetch Attendance Summary ==================
+  // ================== Fetch Summary ==================
   const fetchSummary = useCallback(async (roleInfo) => {
     setLoading(true);
     try {
       const token = getToken();
       
       if (!token) {
-        router.push("/login");
+        router.push("/");
         return;
       }
 
       const query = new URLSearchParams({
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
+        ...(roleInfo.isAdmin && userId && { employeeId: userId })
       }).toString();
 
       let endpoint;
@@ -326,27 +390,27 @@ export default function AttendancePage({ userId }) {
       };
 
       if (roleInfo.isAdmin) {
-        // Admin can see all or specific user
-        if (userId) {
-          endpoint = `${process.env.NEXT_PUBLIC_API_URL}/admin/attendance/summary/${userId}?${query}`;
-        } else {
-          endpoint = `${process.env.NEXT_PUBLIC_API_URL}/admin/attendance/summary?${query}`;
-        }
+        endpoint = `${process.env.NEXT_PUBLIC_API_URL}/admin/attendance/summary?${query}`;
       } else {
-        // Employee can only see their own
-        endpoint = `${process.env.NEXT_PUBLIC_API_URL}/attendance/summary?${query}`;
+        endpoint = `${process.env.NEXT_PUBLIC_API_URL}/summary?${query}`;
       }
 
       const response = await fetch(endpoint, { headers });
 
       if (response.ok) {
         const data = await response.json();
-        setSummary(data.summary || data);
+        if (roleInfo.isAdmin) {
+          setSummary(data.summary || data);
+        } else {
+          setSummary(data.summary || data);
+        }
+      } else if (response.status === 401) {
+        localStorage.clear();
+        router.push("/");
       } else {
         setSummary(null);
       }
       
-      // Fetch records
       await fetchAttendanceRecords(roleInfo);
     } catch (err) {
       console.error("Fetch summary error:", err);
@@ -369,26 +433,29 @@ export default function AttendancePage({ userId }) {
       const query = new URLSearchParams({
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
+        ...(roleInfo.isAdmin && userId && { employeeId: userId })
       }).toString();
 
       let endpoint;
       if (roleInfo.isAdmin) {
-        if (userId) {
-          endpoint = `${process.env.NEXT_PUBLIC_API_URL}/admin/attendance/records/${userId}?${query}`;
-        } else {
-          endpoint = `${process.env.NEXT_PUBLIC_API_URL}/admin/attendance/records?${query}`;
-        }
+        endpoint = `${process.env.NEXT_PUBLIC_API_URL}/admin/attendance/all?${query}`;
       } else {
-        endpoint = `${process.env.NEXT_PUBLIC_API_URL}/attendance/records?${query}`;
+        endpoint = `${process.env.NEXT_PUBLIC_API_URL}/records?${query}`;
       }
 
       const response = await fetch(endpoint, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        }
       });
 
       if (response.ok) {
         const data = await response.json();
         setAttendance(data.records || data || []);
+      } else if (response.status === 401) {
+        localStorage.clear();
+        router.push("/");
       } else {
         setAttendance([]);
       }
@@ -402,7 +469,6 @@ export default function AttendancePage({ userId }) {
   const initializeData = useCallback(async () => {
     setLoading(true);
     try {
-      // First fetch user profile to get role
       const roleInfo = await fetchUserProfile();
       
       if (roleInfo) {
@@ -410,12 +476,10 @@ export default function AttendancePage({ userId }) {
         setIsAdmin(roleInfo.isAdmin);
         setUserData(roleInfo.userData);
         
-        // Only fetch today status for employees
         if (roleInfo.role === "employee") {
           await fetchTodayStatus();
         }
         
-        // Then fetch summary with role info
         await fetchSummary(roleInfo);
       }
     } catch (error) {
@@ -457,7 +521,10 @@ export default function AttendancePage({ userId }) {
       }
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/attendance/${attendanceId}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        }
       });
 
       if (response.ok) {
@@ -482,9 +549,9 @@ export default function AttendancePage({ userId }) {
 
   useEffect(() => {
     initializeData();
-  }, [initializeData, dateRange]);
+  }, [initializeData]);
 
-  // ================== Clock In - Employee only ==================
+  // ================== Clock In ==================
   const handleClockIn = async () => {
     if (userRole !== "employee") {
       toast.error("Only employees can clock in/out");
@@ -500,16 +567,14 @@ export default function AttendancePage({ userId }) {
         return;
       }
 
-      const clockInTime = new Date().toISOString();
-      
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/attendance/clock-in`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clock-in`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
+          "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          timestamp: clockInTime,
+          timestamp: new Date().toISOString(),
           location: "Office",
           device: navigator.userAgent
         })
@@ -518,24 +583,21 @@ export default function AttendancePage({ userId }) {
       const data = await response.json();
 
       if (response.ok) {
-        // Update state
         const newStatus = {
           ...todayStatus,
           clockedIn: true,
-          clockInTime: clockInTime,
+          clockInTime: data.attendance?.clockIn || new Date().toISOString(),
           status: "Clocked In"
         };
         setTodayStatus(newStatus);
         
-        // Save clock details
         if (data.attendance) {
           setClockDetails(data.attendance);
         }
         setShowRecentDetails(true);
         
-        toast.success(`✓ Clock In successful at ${new Date(clockInTime).toLocaleTimeString()}`);
+        toast.success(`✓ ${data.message || "Clock In successful"}`);
         
-        // Refresh data
         await fetchTodayStatus();
         const roleInfo = { role: userRole, isAdmin, userData };
         await fetchSummary(roleInfo);
@@ -550,7 +612,7 @@ export default function AttendancePage({ userId }) {
     }
   };
 
-  // ================== Clock Out - Employee only ==================
+  // ================== Clock Out ==================
   const handleClockOut = async () => {
     if (userRole !== "employee") {
       toast.error("Only employees can clock in/out");
@@ -566,16 +628,14 @@ export default function AttendancePage({ userId }) {
         return;
       }
 
-      const clockOutTime = new Date().toISOString();
-      
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/attendance/clock-out`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clock-out`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
+          "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          timestamp: clockOutTime,
+          timestamp: new Date().toISOString(),
           location: "Office",
           device: navigator.userAgent
         })
@@ -584,24 +644,21 @@ export default function AttendancePage({ userId }) {
       const data = await response.json();
 
       if (response.ok) {
-        // Update state
         const newStatus = {
           ...todayStatus,
           clockedOut: true,
-          clockOutTime: clockOutTime,
+          clockOutTime: data.attendance?.clockOut || new Date().toISOString(),
           status: "Present"
         };
         setTodayStatus(newStatus);
         
-        // Save clock details
         if (data.attendance) {
           setClockDetails(data.attendance);
         }
         setShowRecentDetails(true);
         
-        toast.success(`✓ Clock Out successful!`);
+        toast.success(`✓ ${data.message || "Clock Out successful"}`);
         
-        // Refresh data
         await fetchTodayStatus();
         const roleInfo = { role: userRole, isAdmin, userData };
         await fetchSummary(roleInfo);
@@ -625,29 +682,27 @@ export default function AttendancePage({ userId }) {
     
     const clockIn = prompt("Enter new Clock In time (HH:mm, e.g., 09:00)", "09:00"); 
     const clockOut = prompt("Enter new Clock Out time (HH:mm, e.g., 18:00)", "18:00");
-    const status = prompt("Enter status (present / absent / leave / late)", "present");
+    const status = prompt("Enter status (present / absent / leave / late / govt holiday / weekly off / off day)", "present");
 
     if (!attendanceId || (!clockIn && !clockOut && !status)) return;
 
     try {
       const token = getToken();
       
-      // Create proper date-time strings
       const today = new Date().toISOString().split('T')[0];
       const clockInFull = clockIn ? `${today}T${clockIn}:00` : null;
       const clockOutFull = clockOut ? `${today}T${clockOut}:00` : null;
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/attendance/admin-correct`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/attendance/correct//${attendanceId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
+          "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          attendanceId,
           clockIn: clockInFull,
           clockOut: clockOutFull,
-          status
+          status: status.toLowerCase()
         })
       });
 
@@ -655,7 +710,6 @@ export default function AttendancePage({ userId }) {
 
       if (response.ok) {
         toast.success("✓ Attendance corrected successfully!");
-        // Refresh data
         const roleInfo = { role: userRole, isAdmin, userData };
         await fetchSummary(roleInfo);
       } else {
@@ -667,7 +721,6 @@ export default function AttendancePage({ userId }) {
     }
   };
 
-  // Calculate current time
   const [currentTime, setCurrentTime] = useState(new Date());
   useEffect(() => {
     const timer = setInterval(() => {
@@ -676,7 +729,16 @@ export default function AttendancePage({ userId }) {
     return () => clearInterval(timer);
   }, []);
 
-  // Format time nicely
+  // Pagination calculations
+  const totalPages = Math.ceil(attendance.length / itemsPerPage);
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentItems = attendance.slice(indexOfFirstItem, indexOfLastItem);
+
+  const paginate = (pageNumber) => setCurrentPage(pageNumber);
+  const nextPage = () => setCurrentPage(prev => Math.min(prev + 1, totalPages));
+  const prevPage = () => setCurrentPage(prev => Math.max(prev - 1, 1));
+
   const formatTime = (date) => {
     return date.toLocaleTimeString('en-US', { 
       hour: '2-digit', 
@@ -685,7 +747,6 @@ export default function AttendancePage({ userId }) {
     });
   };
 
-  // Format date
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       weekday: 'long',
@@ -695,13 +756,11 @@ export default function AttendancePage({ userId }) {
     });
   };
 
-  // Format time from ISO string
   const formatTimeFromISO = (isoString) => {
     if (!isoString) return "-";
     return new Date(isoString).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
   };
 
-  // Format date for display
   const formatDateDisplay = (isoString) => {
     if (!isoString) return "-";
     return new Date(isoString).toLocaleDateString('en-US', {
@@ -711,7 +770,6 @@ export default function AttendancePage({ userId }) {
     });
   };
 
-  // Get status color
   const getStatusColor = (status) => {
     switch(status?.toLowerCase()) {
       case 'present': return 'bg-green-100 text-green-800 border-green-200';
@@ -720,18 +778,18 @@ export default function AttendancePage({ userId }) {
       case 'late': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
       case 'govt holiday': return 'bg-purple-100 text-purple-800 border-purple-200';
       case 'weekly off': return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+      case 'off day': return 'bg-gray-100 text-gray-800 border-gray-200';
+      case 'clocked in': return 'bg-blue-100 text-blue-800 border-blue-200';
       default: return 'bg-gray-100 text-gray-800 border-gray-200';
     }
   };
 
-  // Get today's status display
   const getTodayStatusText = () => {
     if (todayStatus.clockedOut) return "Clocked Out";
     if (todayStatus.clockedIn) return "Clocked In";
     return "Not Clocked In";
   };
 
-  // Get today's status color
   const getTodayStatusColor = () => {
     if (todayStatus.clockedOut) return 'bg-blue-100 text-blue-800 border-blue-200';
     if (todayStatus.clockedIn) return 'bg-green-100 text-green-800 border-green-200';
@@ -754,7 +812,7 @@ export default function AttendancePage({ userId }) {
     <>
       <Toaster position="top-right" />
       
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50 p-6">
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50 p-6 overflow-hidden">
         {/* Header Section */}
         <div className="mb-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
@@ -819,11 +877,11 @@ export default function AttendancePage({ userId }) {
                   <p className="text-gray-500 text-sm mt-1">
                     {formatDate(new Date().toISOString())}
                     <span className="ml-2 text-xs text-purple-500">
-                      • Resets at midnight
+                      • Auto clock-out at 6:30 PM
                     </span>
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <button
                     onClick={handleClockIn}
                     disabled={loading || todayStatus.clockedIn || todayStatus.clockedOut}
@@ -841,7 +899,6 @@ export default function AttendancePage({ userId }) {
                     {todayStatus.clockedOut ? "Clocked Out" : "Clock Out"}
                   </button>
                   
-                  {/* Show/Hide Details Button */}
                   {(clockDetails || todayStatus.clockedIn) && (
                     <button
                       onClick={toggleDetailsVisibility}
@@ -863,7 +920,6 @@ export default function AttendancePage({ userId }) {
                 </div>
               </div>
               
-              {/* Today's Status Cards */}
               <div className="mt-6">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className={`p-4 rounded-xl border transition-all duration-300 ${
@@ -994,7 +1050,6 @@ export default function AttendancePage({ userId }) {
             </div>
           )}
 
-          {/* Clock Details Card - Show when requested */}
           {(clockDetails && showRecentDetails) && (
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-6 shadow-xl border border-blue-100 mb-8 animate-fadeIn">
               <div className="flex items-center justify-between mb-4">
@@ -1024,7 +1079,6 @@ export default function AttendancePage({ userId }) {
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* Basic Info */}
                 <div className="p-4 bg-white rounded-xl border border-blue-100 hover:border-blue-200 transition-all duration-300">
                   <div className="flex items-center gap-2 mb-2">
                     <Calendar size={16} className="text-blue-500" />
@@ -1042,7 +1096,6 @@ export default function AttendancePage({ userId }) {
                   </div>
                 </div>
                 
-                {/* Clock In Time */}
                 {clockDetails.clockIn && (
                   <div className="p-4 bg-white rounded-xl border border-green-100 hover:border-green-200 transition-all duration-300">
                     <div className="flex items-center gap-2 mb-2">
@@ -1062,7 +1115,6 @@ export default function AttendancePage({ userId }) {
                   </div>
                 )}
                 
-                {/* Clock Out Time */}
                 {clockDetails.clockOut && (
                   <div className="p-4 bg-white rounded-xl border border-blue-100 hover:border-blue-200 transition-all duration-300">
                     <div className="flex items-center gap-2 mb-2">
@@ -1082,7 +1134,6 @@ export default function AttendancePage({ userId }) {
                   </div>
                 )}
                 
-                {/* Total Hours */}
                 {clockDetails.totalHours > 0 && (
                   <div className="p-4 bg-white rounded-xl border border-purple-100 hover:border-purple-200 transition-all duration-300">
                     <div className="flex items-center gap-2 mb-2">
@@ -1090,7 +1141,7 @@ export default function AttendancePage({ userId }) {
                       <span className="text-sm font-medium text-gray-700">Total Hours</span>
                     </div>
                     <div className="text-lg font-semibold text-purple-700">
-                      {parseFloat(clockDetails.totalHours).toFixed(4)}
+                      {parseFloat(clockDetails.totalHours).toFixed(2)}
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
                       Hours worked
@@ -1098,7 +1149,6 @@ export default function AttendancePage({ userId }) {
                   </div>
                 )}
                 
-                {/* Status */}
                 <div className="p-4 bg-white rounded-xl border border-gray-100 hover:border-gray-200 transition-all duration-300">
                   <div className="flex items-center gap-2 mb-2">
                     <CheckCircle size={16} className="text-green-500" />
@@ -1107,14 +1157,17 @@ export default function AttendancePage({ userId }) {
                   <div className={`inline-flex px-3 py-1 rounded-full text-sm font-semibold ${
                     clockDetails.status === 'Present' ? 'bg-green-100 text-green-800' : 
                     clockDetails.status === 'Absent' ? 'bg-red-100 text-red-800' : 
+                    clockDetails.status === 'Leave' ? 'bg-blue-100 text-blue-800' : 
+                    clockDetails.status === 'Late' ? 'bg-yellow-100 text-yellow-800' :
                     clockDetails.status === 'Clocked In' ? 'bg-blue-100 text-blue-800' : 
+                    clockDetails.status === 'Govt Holiday' ? 'bg-purple-100 text-purple-800' :
+                    clockDetails.status === 'Weekly Off' ? 'bg-indigo-100 text-indigo-800' :
                     'bg-gray-100 text-gray-800'
                   }`}>
                     {clockDetails.status}
                   </div>
                 </div>
                 
-                {/* Device Info */}
                 <div className="p-4 bg-white rounded-xl border border-gray-100 hover:border-gray-200 transition-all duration-300">
                   <div className="flex items-center gap-2 mb-2">
                     <Activity size={16} className="text-gray-500" />
@@ -1136,7 +1189,6 @@ export default function AttendancePage({ userId }) {
                   </div>
                 </div>
                 
-                {/* IP Address */}
                 <div className="p-4 bg-white rounded-xl border border-gray-100 hover:border-gray-200 transition-all duration-300">
                   <div className="flex items-center gap-2 mb-2">
                     <Zap size={16} className="text-yellow-500" />
@@ -1147,7 +1199,6 @@ export default function AttendancePage({ userId }) {
                   </div>
                 </div>
                 
-                {/* Admin Correction Status */}
                 {clockDetails.correctedByAdmin && (
                   <div className="p-4 bg-white rounded-xl border border-orange-100 hover:border-orange-200 transition-all duration-300">
                     <div className="flex items-center gap-2 mb-2">
@@ -1164,7 +1215,6 @@ export default function AttendancePage({ userId }) {
                 )}
               </div>
               
-              {/* Action Buttons */}
               <div className="mt-6 pt-6 border-t border-blue-100 flex flex-wrap gap-3">
                 <button
                   onClick={() => {
@@ -1207,7 +1257,6 @@ export default function AttendancePage({ userId }) {
             </div>
           )}
 
-          {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-all duration-300">
               <div className="flex items-center justify-between">
@@ -1268,16 +1317,15 @@ export default function AttendancePage({ userId }) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Column - Attendance Records */}
-            <div className="lg:col-span-2">
-              <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
+          <div className=" ">
+            <div className=" ">
+              <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-xl border border-gray-100 overflow-hidden h-full">
                 <div className="p-6 border-b border-gray-100">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
                       <h2 className="text-xl font-bold text-gray-900">Attendance Records</h2>
                       <p className="text-gray-500 text-sm">
-                        {attendance.length} records found
+                        Showing {currentItems.length} of {attendance.length} records
                         {userId && ` for Employee ID: ${userId}`}
                       </p>
                     </div>
@@ -1302,7 +1350,10 @@ export default function AttendancePage({ userId }) {
                           />
                         </div>
                         <button
-                          onClick={handleRefresh}
+                          onClick={() => {
+                            setCurrentPage(1);
+                            handleRefresh();
+                          }}
                           disabled={loading}
                           className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:opacity-90 transition-all duration-300 flex items-center gap-2 disabled:opacity-50"
                         >
@@ -1314,124 +1365,204 @@ export default function AttendancePage({ userId }) {
                   </div>
                 </div>
 
-                {loading ? (
-                  <div className="p-12 text-center">
-                    <div className="inline-flex flex-col items-center">
-                      <Loader2 size={48} className="animate-spin text-purple-600 mb-4" />
-                      <p className="text-gray-600 font-medium">Loading attendance records...</p>
-                    </div>
-                  </div>
-                ) : attendance.length === 0 ? (
-                  <div className="p-12 text-center">
-                    <div className="flex flex-col items-center justify-center">
-                      <div className="w-20 h-20 bg-gradient-to-r from-gray-100 to-gray-200 rounded-full flex items-center justify-center mb-4">
-                        <Calendar className="text-gray-400" size={32} />
+                <div className="h-[calc(100%-80px)] overflow-auto">
+                  {loading ? (
+                    <div className="p-12 text-center">
+                      <div className="inline-flex flex-col items-center">
+                        <Loader2 size={48} className="animate-spin text-purple-600 mb-4" />
+                        <p className="text-gray-600 font-medium">Loading attendance records...</p>
                       </div>
-                      <h3 className="text-lg font-semibold text-gray-700 mb-2">No attendance records</h3>
-                      <p className="text-gray-500 max-w-md">
-                        No records found for the selected date range
-                      </p>
                     </div>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="bg-gradient-to-r from-gray-50 to-gray-100">
-                          <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Date</th>
-                          {isAdmin && <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Employee</th>}
-                          <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Clock In</th>
-                          <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Clock Out</th>
-                          <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Total Hours</th>
-                          <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Status</th>
-                          <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {attendance.map((a) => (
-                          <tr key={a._id} className="hover:bg-gray-50 transition-colors duration-200">
-                            <td className="py-4 px-6">
-                              <div className="font-medium text-gray-900">
-                                {new Date(a.date).toLocaleDateString('en-US', { 
-                                  weekday: 'short',
-                                  month: 'short',
-                                  day: 'numeric'
-                                })}
-                              </div>
-                            </td>
-                            {isAdmin && (
-                              <td className="py-4 px-6">
-                                <div className="font-medium text-gray-900">
-                                  {a.employee?.name || `Employee ${a.employee?._id?.slice(-6) || 'N/A'}`}
-                                </div>
-                              </td>
-                            )}
-                            <td className="py-4 px-6">
-                              <div className="flex items-center">
-                                <Sun className="w-4 h-4 mr-2 text-yellow-500" />
-                                <span className="font-medium">{formatTimeFromISO(a.clockIn)}</span>
-                              </div>
-                            </td>
-                            <td className="py-4 px-6">
-                              <div className="flex items-center">
-                                <Moon className="w-4 h-4 mr-2 text-indigo-500" />
-                                <span className="font-medium">{formatTimeFromISO(a.clockOut)}</span>
-                              </div>
-                            </td>
-                            <td className="py-4 px-6">
-                              <div className="flex items-center">
-                                <Clock className="w-4 h-4 mr-2 text-blue-500" />
-                                <span className={`font-bold ${a.totalHours >= 8 ? 'text-green-600' : 'text-yellow-600'}`}>
-                                  {a.totalHours?.toFixed(2) || "-"}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="py-4 px-6">
-                              <div className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium border ${getStatusColor(a.status)}`}>
-                                {a.status || "Pending"}
-                              </div>
-                            </td>
-                            <td className="py-4 px-6">
-                              <div className="flex items-center space-x-2">
-                                <button
-                                  onClick={() => handleViewDetails(a._id)}
-                                  className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors duration-200"
-                                  title="View Details"
-                                >
-                                  <Eye size={18} />
-                                </button>
+                  ) : attendance.length === 0 ? (
+                    <div className="p-12 text-center">
+                      <div className="flex flex-col items-center justify-center">
+                        <div className="w-20 h-20 bg-gradient-to-r from-gray-100 to-gray-200 rounded-full flex items-center justify-center mb-4">
+                          <Calendar className="text-gray-400" size={32} />
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-700 mb-2">No attendance records</h3>
+                        <p className="text-gray-500 max-w-md">
+                          No records found for the selected date range
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto max-h-[500px]">
+                        <table className="w-full">
+                          <thead className="sticky top-0 bg-gradient-to-r from-gray-50 to-gray-100 z-10">
+                            <tr>
+                              <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Date</th>
+                              {isAdmin && <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Employee</th>}
+                              <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Clock In</th>
+                              <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Clock Out</th>
+                              <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Total Hours</th>
+                              <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Status</th>
+                              <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {currentItems.map((a) => (
+                              <tr key={a._id} className="hover:bg-gray-50 transition-colors duration-200">
+                                <td className="py-4 px-6">
+                                  <div className="font-medium text-gray-900">
+                                    {new Date(a.date).toLocaleDateString('en-US', { 
+                                      weekday: 'short',
+                                      month: 'short',
+                                      day: 'numeric'
+                                    })}
+                                  </div>
+                                </td>
                                 {isAdmin && (
-                                  <button
-                                    onClick={() => handleCorrectAttendance(a._id)}
-                                    className="p-2 text-yellow-600 hover:bg-yellow-50 rounded-lg transition-colors duration-200"
-                                    title="Edit Attendance"
-                                  >
-                                    <Edit size={18} />
-                                  </button>
+                                  <td className="py-4 px-6">
+                                    <div className="font-medium text-gray-900">
+                                      {a.employee?.firstName ? `${a.employee.firstName} ${a.employee.lastName}` : `Employee ${a.employee?._id?.slice(-6) || 'N/A'}`}
+                                    </div>
+                                    <div className="text-xs text-gray-500">
+                                      {a.employee?.email || ''}
+                                    </div>
+                                  </td>
                                 )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                                <td className="py-4 px-6">
+                                  <div className="flex items-center">
+                                    <Sun className="w-4 h-4 mr-2 text-yellow-500" />
+                                    <span className="font-medium">{formatTimeFromISO(a.clockIn)}</span>
+                                  </div>
+                                </td>
+                                <td className="py-4 px-6">
+                                  <div className="flex items-center">
+                                    <Moon className="w-4 h-4 mr-2 text-indigo-500" />
+                                    <span className="font-medium">{formatTimeFromISO(a.clockOut)}</span>
+                                  </div>
+                                </td>
+                                <td className="py-4 px-6">
+                                  <div className="flex items-center">
+                                    <Clock className="w-4 h-4 mr-2 text-blue-500" />
+                                    <span className={`font-bold ${a.totalHours >= 8 ? 'text-green-600' : 'text-yellow-600'}`}>
+                                      {a.totalHours?.toFixed(2) || "-"}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="py-4 px-6">
+                                  <div className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium border ${getStatusColor(a.status)}`}>
+                                    {a.status || "Pending"}
+                                  </div>
+                                </td>
+                                <td className="py-4 px-6">
+                                  <div className="flex items-center space-x-2">
+                                    <button
+                                      onClick={() => handleViewDetails(a._id)}
+                                      className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors duration-200"
+                                      title="View Details"
+                                    >
+                                      <Eye size={18} />
+                                    </button>
+                                    {isAdmin && (
+                                      <button
+                                        onClick={() => handleCorrectAttendance(a._id)}
+                                        className="p-2 text-yellow-600 hover:bg-yellow-50 rounded-lg transition-colors duration-200"
+                                        title="Edit Attendance"
+                                      >
+                                        <Edit size={18} />
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      
+                      {/* Pagination */}
+                      {totalPages > 1 && (
+                        <div className="sticky bottom-0 bg-white border-t border-gray-100 p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="text-sm text-gray-500">
+                              Page {currentPage} of {totalPages}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={prevPage}
+                                disabled={currentPage === 1}
+                                className="px-3 py-2 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                <ChevronLeft size={18} />
+                              </button>
+                              
+                              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                                let pageNum;
+                                if (totalPages <= 5) {
+                                  pageNum = i + 1;
+                                } else if (currentPage <= 3) {
+                                  pageNum = i + 1;
+                                } else if (currentPage >= totalPages - 2) {
+                                  pageNum = totalPages - 4 + i;
+                                } else {
+                                  pageNum = currentPage - 2 + i;
+                                }
+                                
+                                return (
+                                  <button
+                                    key={pageNum}
+                                    onClick={() => paginate(pageNum)}
+                                    className={`w-10 h-10 rounded-lg transition-all ${
+                                      currentPage === pageNum
+                                        ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
+                                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                                    }`}
+                                  >
+                                    {pageNum}
+                                  </button>
+                                );
+                              })}
+                              
+                              <button
+                                onClick={nextPage}
+                                disabled={currentPage === totalPages}
+                                className="px-3 py-2 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                <ChevronRightIcon size={18} />
+                              </button>
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {itemsPerPage} per page
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
-            {/* Right Column - Summary */}
-            <div className="lg:col-span-1">
-              <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-xl border border-gray-100 sticky top-6">
+            <div className="lg:col-span-1 mt-6">
+              <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-xl border border-gray-100 h-full">
                 <div className="p-6 border-b border-gray-100">
                   <h2 className="text-xl font-bold text-gray-900">Attendance Summary</h2>
                   <p className="text-gray-500 text-sm mt-1">Selected period overview</p>
                 </div>
 
-                <div className="p-6 space-y-6">
+                <div className="p-6 space-y-6 overflow-y-auto max-h-[500px]">
                   {summary ? (
                     <>
                       <div className="space-y-4">
+                        {isAdmin && (
+                          <>
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-600">Total Employees</span>
+                              <span className="font-semibold text-gray-900">{summary.totalEmployees || 0}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-600">Present Today</span>
+                              <span className="font-semibold text-green-600">{summary.presentToday || 0}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-600">Absent Today</span>
+                              <span className="font-semibold text-red-600">{summary.absentToday || 0}</span>
+                            </div>
+                          </>
+                        )}
                         <div className="flex justify-between items-center">
                           <span className="text-gray-600">Working Days</span>
                           <span className="font-semibold text-gray-900">{summary.workingDays || 0}</span>
@@ -1445,8 +1576,16 @@ export default function AttendancePage({ userId }) {
                           <span className="font-semibold text-red-600">{summary.daysAbsent || 0}</span>
                         </div>
                         <div className="flex justify-between items-center">
+                          <span className="text-gray-600">Days Leave</span>
+                          <span className="font-semibold text-blue-600">{summary.daysLeave || 0}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
                           <span className="text-gray-600">Late Arrivals</span>
                           <span className="font-semibold text-yellow-600">{summary.lateArrivals || 0}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-600">Holidays/Off</span>
+                          <span className="font-semibold text-purple-600">{summary.daysHoliday || 0}</span>
                         </div>
                         <div className="border-t border-gray-200 pt-4">
                           <div className="flex justify-between items-center">
@@ -1501,6 +1640,14 @@ export default function AttendancePage({ userId }) {
         }
         .animate-pulse {
           animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        
+        .max-h-[500px] {
+          max-height: 500px;
+        }
+        
+        .h-[calc(100%-80px)] {
+          height: calc(100% - 80px);
         }
       `}</style>
     </>

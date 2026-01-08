@@ -8,31 +8,31 @@ import {
   Edit,
   Trash2,
   Filter,
-  Download,
   RefreshCw,
   X,
   AlertCircle,
   Clock,
   Calendar,
-  Users,
-  TrendingUp,
   Shield,
   User,
   CheckCircle,
   XCircle,
   Eye,
-  Copy,
   Settings,
-  Percent,
   Award,
   Coffee,
-  Moon,
-  Sun,
-  Zap
+  Zap,
+  Info,
+  FileText,
+  Save,
+  Users,
+  Building,
+  Percent,
+  TrendingUp
 } from "lucide-react";
 import { Toaster, toast } from "react-hot-toast";
 
-export default function SalaryRulesPage() {
+export default function page() {
   const router = useRouter();
   const [salaryRules, setSalaryRules] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -42,176 +42,188 @@ export default function SalaryRulesPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedRule, setSelectedRule] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [userRole, setUserRole] = useState(null);
+  
+  // ✅ Updated form state to match backend controller
   const [form, setForm] = useState({
     title: "",
-    salaryType: "monthly",
-    rate: 0,
+    description: "",
+    salaryType: "fixed", // ✅ Backend required
+    rate: 0, // ✅ Backend required
     overtimeRate: 0,
-    bonus: 0,
+    overtimeEnabled: false,
     leaveRule: {
-      paidLeave: 0,
-      unpaidLeave: 0,
-      sickLeave: 0,
-      casualLeave: 0
+      enabled: false,
+      perDayDeduction: 0,
+      paidLeaves: 0
     },
     lateRule: {
-      deductionPerLate: 0,
-      maxLateMinutes: 30,
-      gracePeriod: 10
+      enabled: false,
+      lateDaysThreshold: 3,
+      equivalentLeaveDays: 0.5
     },
-    isActive: true
+    bonusAmount: 0,
+    bonusConditions: "",
+    isActive: true,
+    department: "",
+    applicableTo: ["all_employees"]
   });
-  
-  // User role state
-  const [userRole, setUserRole] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [userData, setUserData] = useState(null);
 
-  // Helper function to get user type
-  const getUserType = () => {
-    if (typeof window !== "undefined") {
-      const adminToken = localStorage.getItem("adminToken");
-      const employeeToken = localStorage.getItem("employeeToken");
-      
-      if (adminToken) return "admin";
-      if (employeeToken) return "employee";
-    }
-    return null;
-  };
-
-  // Get token
-  const getToken = () => {
-    const userType = getUserType();
-    if (userType === "admin") {
-      return localStorage.getItem("adminToken");
-    } else if (userType === "employee") {
-      return localStorage.getItem("employeeToken");
-    }
-    return null;
-  };
-
-  // Fetch user profile
-  const fetchUserProfile = async () => {
+  // Get user role and token
+  const getUserInfo = () => {
     try {
-      const userType = getUserType();
-      const token = getToken();
-      
+      const token = localStorage.getItem("token") || 
+                    localStorage.getItem("jwt") || 
+                    localStorage.getItem("authToken") ||
+                    localStorage.getItem("accessToken") ||
+                    localStorage.getItem("adminToken") || 
+                    localStorage.getItem("employeeToken");
+
       if (!token) {
-        router.push("/login");
-        return { role: "employee", isAdmin: false, userData: null };
+        console.warn("No authentication token found");
+        return null;
       }
 
-      const endpoint = userType === "admin" 
-        ? `${process.env.NEXT_PUBLIC_API_URL}/admin/getAdminProfile`
-        : `${process.env.NEXT_PUBLIC_API_URL}/users/getProfile`;
+      const role = localStorage.getItem("role") || 
+                   localStorage.getItem("userRole") ||
+                   (token === localStorage.getItem("adminToken") ? "admin" : 
+                    token === localStorage.getItem("employeeToken") ? "employee" : 
+                    "user");
 
-      const response = await fetch(endpoint, {
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        }
+      return { 
+        role, 
+        token, 
+        isAdmin: role === "admin" || role === "superadmin" 
+      };
+    } catch (error) {
+      console.error("Error getting user info:", error);
+      return null;
+    }
+  };
+
+  // API Base URL
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://a2itserver.onrender.com/api/v1";
+
+  // ✅ Fetch salary rules based on user role
+  const fetchSalaryRules = async () => {
+    setLoading(true);
+    const loadingToast = toast.loading("Loading salary rules...");
+    
+    try {
+      const userInfo = getUserInfo();
+      
+      if (!userInfo || !userInfo.token) {
+        toast.dismiss(loadingToast);
+        toast.error("Please login first");
+        router.push("/login");
+        return;
+      }
+
+      setUserRole(userInfo.role);
+      setIsAdmin(userInfo.isAdmin);
+
+      console.log("User Info:", {
+        role: userInfo.role,
+        isAdmin: userInfo.isAdmin
       });
 
-      if (response.status === 401) {
-        localStorage.removeItem("adminToken");
-        localStorage.removeItem("employeeToken");
-        router.push("/login");
-        return { role: "employee", isAdmin: false, userData: null };
+      // ✅ Role based endpoint selection
+      let endpoint;
+      
+      if (userInfo.isAdmin) {
+        // Admin: GET /api/v1/getSalaryRule
+        endpoint = `${API_BASE_URL}/getSalaryRule`;
+      } else {
+        // Employee: GET /api/v1/active
+        endpoint = `${API_BASE_URL}/active`;
+      }
+
+      console.log("Using endpoint:", endpoint);
+
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${userInfo.token}`,
+          "Content-Type": "application/json"
+        },
+        cache: 'no-cache'
+      });
+
+      console.log("Response Status:", response.status);
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          localStorage.clear();
+          toast.dismiss(loadingToast);
+          toast.error("Session expired. Please login again.");
+          router.push("/login");
+          return;
+        } else if (response.status === 403) {
+          toast.dismiss(loadingToast);
+          toast.error("Access denied. You don't have permission.");
+          return;
+        }
+        
+        const errorText = await response.text();
+        console.error("API Error Response:", errorText);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
       const data = await response.json();
+      console.log("API Response data:", data);
       
-      if (data.user || (data && typeof data === 'object' && (data.email || data._id))) {
-        const userData = data.user || data;
-        return { 
-          role: userType, 
-          isAdmin: userType === "admin", 
-          userData 
-        };
+      if (data.success || data.status === "success") {
+        const rules = data.data || data.rules || [];
+        
+        if (Array.isArray(rules)) {
+          setSalaryRules(rules);
+          toast.dismiss(loadingToast);
+          toast.success(`Loaded ${rules.length} salary rules`, {
+            icon: '💰',
+            duration: 3000,
+          });
+          
+          console.log("Rules loaded:", rules.length);
+        } else {
+          toast.dismiss(loadingToast);
+          toast.error("Invalid data format received from server");
+        }
+      } else {
+        toast.dismiss(loadingToast);
+        toast.error(data.message || "Failed to load salary rules");
       }
       
-      return { role: "employee", isAdmin: false, userData: null };
     } catch (error) {
-      console.error("Error fetching profile:", error);
-      return { role: "employee", isAdmin: false, userData: null };
+      toast.dismiss(loadingToast);
+      toast.error(`Error loading salary rules: ${error.message}`);
+      console.error("Fetch salary rules error details:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Fetch salary rules
-const fetchSalaryRules = async () => {
-  setLoading(true);
-  const loadingToast = toast.loading("Loading salary rules...");
-  
-  try {
-    const token = getToken();
-    
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-
-    // Fetch user profile first
-    const userProfile = await fetchUserProfile();
-    if (userProfile) {
-      setUserRole(userProfile.role);
-      setIsAdmin(userProfile.isAdmin);
-      setUserData(userProfile.userData);
-    }
-
-    // Both admin and employee can view salary rules
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/getSalary`, {
-      headers: { 
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json"
-      }
-    });
-
-    const data = await response.json();
-    
-    if (data.status === "success") {
-      setSalaryRules(data.rules || []);
-      toast.dismiss(loadingToast);
-      toast.success(`Loaded ${data.rules?.length || 0} salary rules`, {
-        icon: '💰',
-        duration: 3000,
-      });
-    } else {
-      toast.dismiss(loadingToast);
-      toast.error(data.message || "Failed to load salary rules");
-    }
-  } catch (error) {
-    toast.dismiss(loadingToast);
-    toast.error("Error loading salary rules");
-    console.error("Fetch salary rules error:", error);
-  } finally {
-    setLoading(false);
-  }
-};
-
-  // Handle form change
+  // ✅ Handle form change for nested objects
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     
-    if (name.startsWith("leaveRule.")) {
-      const field = name.split(".")[1];
+    // Handle nested objects (leaveRule, lateRule)
+    if (name.startsWith("leaveRule.") || name.startsWith("lateRule.")) {
+      const [parent, child] = name.split(".");
       setForm(prev => ({
         ...prev,
-        leaveRule: {
-          ...prev.leaveRule,
-          [field]: type === "number" ? parseFloat(value) || 0 : value
+        [parent]: {
+          ...prev[parent],
+          [child]: type === "number" ? parseFloat(value) || 0 : 
+                   type === "checkbox" ? checked : 
+                   value
         }
       }));
-    } else if (name.startsWith("lateRule.")) {
-      const field = name.split(".")[1];
-      setForm(prev => ({
-        ...prev,
-        lateRule: {
-          ...prev.lateRule,
-          [field]: type === "number" ? parseFloat(value) || 0 : value
-        }
-      }));
-    } else {
+    } 
+    // Handle other fields
+    else {
       setForm(prev => ({
         ...prev,
         [name]: type === "checkbox" ? checked : 
@@ -221,8 +233,35 @@ const fetchSalaryRules = async () => {
     }
   };
 
-  // Add new salary rule
-  const handleAddSalaryRule = async (e) => {
+  // ✅ Reset form 
+  const resetForm = () => {
+    setForm({
+      title: "",
+      description: "",
+      salaryType: "fixed",
+      rate: 0,
+      overtimeRate: 0,
+      overtimeEnabled: false,
+      leaveRule: {
+        enabled: false,
+        perDayDeduction: 0,
+        paidLeaves: 0
+      },
+      lateRule: {
+        enabled: false,
+        lateDaysThreshold: 3,
+        equivalentLeaveDays: 0.5
+      },
+      bonusAmount: 0,
+      bonusConditions: "",
+      isActive: true,
+      department: "",
+      applicableTo: ["all_employees"]
+    });
+  };
+
+  // ✅ Create salary rule - Matches backend controller
+  const handleCreateRule = async (e) => {
     e.preventDefault();
     
     if (!isAdmin) {
@@ -234,57 +273,86 @@ const fetchSalaryRules = async () => {
     const loadingToast = toast.loading("Creating salary rule...");
     
     try {
-      const token = getToken();
+      const userInfo = getUserInfo();
       
-      if (!token) {
+      if (!userInfo || !userInfo.token) {
+        toast.dismiss(loadingToast);
         toast.error("Authentication required");
+        setFormLoading(false);
         return;
       }
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/createSalary`, {
+      // ✅ Backend validation
+      if (!form.title || !form.salaryType || form.rate === undefined) {
+        toast.dismiss(loadingToast);
+        toast.error("Please fill all required fields: Title, Salary Type, and Rate");
+        setFormLoading(false);
+        return;
+      }
+
+      // ✅ Prepare data matching backend structure
+      const ruleData = {
+        title: form.title,
+        salaryType: form.salaryType,
+        rate: parseFloat(form.rate),
+        description: form.description || "",
+        overtimeRate: parseFloat(form.overtimeRate) || 0,
+        overtimeEnabled: form.overtimeEnabled,
+        leaveRule: {
+          enabled: form.leaveRule.enabled,
+          perDayDeduction: parseFloat(form.leaveRule.perDayDeduction) || 0,
+          paidLeaves: parseInt(form.leaveRule.paidLeaves) || 0
+        },
+        lateRule: {
+          enabled: form.lateRule.enabled,
+          lateDaysThreshold: parseInt(form.lateRule.lateDaysThreshold) || 3,
+          equivalentLeaveDays: parseFloat(form.lateRule.equivalentLeaveDays) || 0.5
+        },
+        bonusAmount: parseFloat(form.bonusAmount) || 0,
+        bonusConditions: form.bonusConditions || "",
+        isActive: form.isActive,
+        department: form.department || null,
+        applicableTo: Array.isArray(form.applicableTo) ? form.applicableTo : ["all_employees"]
+      };
+
+      console.log("📤 Creating rule:", ruleData);
+
+      const response = await fetch(`${API_BASE_URL}/createSalaryRule`, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${token}`,
+          "Authorization": `Bearer ${userInfo.token}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(form)
+        body: JSON.stringify(ruleData)
       });
 
       const data = await response.json();
+      console.log("Backend response:", data);
       
-      if (response.status === 403) {
-        toast.error("Only admin can create salary rules");
-        return;
-      }
-      
-      if (data.status === "success") {
+      if (response.ok && data.success) {
         toast.dismiss(loadingToast);
-        toast.success("Salary rule created successfully!", {
-          icon: '✅',
-          duration: 3000,
-        });
-        
+        toast.success("✅ Salary rule created successfully!");
         setShowAddModal(false);
         resetForm();
         fetchSalaryRules();
       } else {
         toast.dismiss(loadingToast);
-        toast.error(data.message || "Failed to create salary rule");
+        toast.error(data.message || "Failed to create rule");
       }
     } catch (error) {
       toast.dismiss(loadingToast);
-      toast.error("Error creating salary rule");
-      console.error("Add salary rule error:", error);
+      console.error("Error:", error);
+      toast.error(error.message || "Network error");
     } finally {
       setFormLoading(false);
     }
   };
 
-  // Update salary rule
-  const handleUpdateSalaryRule = async (e) => {
+  // ✅ Update salary rule
+  const handleUpdateRule = async (e) => {
     e.preventDefault();
     
-    if (!isAdmin) {
+    if (!isAdmin || !selectedRule) {
       toast.error("Only admin can update salary rules");
       return;
     }
@@ -293,36 +361,66 @@ const fetchSalaryRules = async () => {
     const loadingToast = toast.loading("Updating salary rule...");
     
     try {
-      const token = getToken();
+      const userInfo = getUserInfo();
       
-      if (!token) {
+      if (!userInfo) {
+        toast.dismiss(loadingToast);
         toast.error("Authentication required");
+        setFormLoading(false);
         return;
       }
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/updateSalary/${selectedRule._id}`, {
+      // ✅ Backend validation
+      if (!form.title || !form.salaryType || form.rate === undefined) {
+        toast.dismiss(loadingToast);
+        toast.error("Please fill all required fields");
+        setFormLoading(false);
+        return;
+      }
+
+      const endpoint = `${API_BASE_URL}/updateSalaryRule/${selectedRule._id}`;
+
+      // ✅ Prepare data matching backend structure
+      const updateData = {
+        title: form.title,
+        salaryType: form.salaryType,
+        rate: parseFloat(form.rate),
+        description: form.description || "",
+        overtimeRate: parseFloat(form.overtimeRate) || 0,
+        overtimeEnabled: form.overtimeEnabled,
+        leaveRule: {
+          enabled: form.leaveRule.enabled,
+          perDayDeduction: parseFloat(form.leaveRule.perDayDeduction) || 0,
+          paidLeaves: parseInt(form.leaveRule.paidLeaves) || 0
+        },
+        lateRule: {
+          enabled: form.lateRule.enabled,
+          lateDaysThreshold: parseInt(form.lateRule.lateDaysThreshold) || 3,
+          equivalentLeaveDays: parseFloat(form.lateRule.equivalentLeaveDays) || 0.5
+        },
+        bonusAmount: parseFloat(form.bonusAmount) || 0,
+        bonusConditions: form.bonusConditions || "",
+        isActive: form.isActive,
+        department: form.department || null,
+        applicableTo: Array.isArray(form.applicableTo) ? form.applicableTo : ["all_employees"]
+      };
+
+      console.log("📤 Updating rule:", updateData);
+
+      const response = await fetch(endpoint, {
         method: "PUT",
         headers: {
-          "Authorization": `Bearer ${token}`,
+          "Authorization": `Bearer ${userInfo.token}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(form)
+        body: JSON.stringify(updateData)
       });
 
       const data = await response.json();
       
-      if (response.status === 403) {
-        toast.error("Only admin can update salary rules");
-        return;
-      }
-      
-      if (data.status === "success") {
+      if (response.ok && data.success) {
         toast.dismiss(loadingToast);
-        toast.success("Salary rule updated successfully!", {
-          icon: '✅',
-          duration: 3000,
-        });
-        
+        toast.success("✅ Salary rule updated successfully!");
         setShowEditModal(false);
         setSelectedRule(null);
         resetForm();
@@ -334,15 +432,15 @@ const fetchSalaryRules = async () => {
     } catch (error) {
       toast.dismiss(loadingToast);
       toast.error("Error updating salary rule");
-      console.error("Update salary rule error:", error);
+      console.error("Update rule error:", error);
     } finally {
       setFormLoading(false);
     }
   };
 
-  // Delete salary rule
-  const handleDeleteSalaryRule = async () => {
-    if (!isAdmin) {
+  // ✅ Delete salary rule
+  const handleDeleteRule = async () => {
+    if (!isAdmin || !selectedRule) {
       toast.error("Only admin can delete salary rules");
       return;
     }
@@ -351,35 +449,30 @@ const fetchSalaryRules = async () => {
     const loadingToast = toast.loading("Deleting salary rule...");
     
     try {
-      const token = getToken();
+      const userInfo = getUserInfo();
       
-      if (!token) {
+      if (!userInfo) {
+        toast.dismiss(loadingToast);
         toast.error("Authentication required");
+        setFormLoading(false);
         return;
       }
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/deleteSalary/${selectedRule._id}`, {
+      const endpoint = `${API_BASE_URL}/deleteSalaryRule/${selectedRule._id}`;
+
+      const response = await fetch(endpoint, {
         method: "DELETE",
         headers: {
-          "Authorization": `Bearer ${token}`,
+          "Authorization": `Bearer ${userInfo.token}`,
           "Content-Type": "application/json"
         }
       });
 
       const data = await response.json();
       
-      if (response.status === 403) {
-        toast.error("Only admin can delete salary rules");
-        return;
-      }
-      
-      if (data.status === "success") {
+      if (response.ok && data.success) {
         toast.dismiss(loadingToast);
-        toast.success("Salary rule deleted successfully!", {
-          icon: '🗑️',
-          duration: 3000,
-        });
-        
+        toast.success("🗑️ Salary rule deleted successfully!");
         setShowDeleteModal(false);
         setSelectedRule(null);
         fetchSalaryRules();
@@ -390,13 +483,13 @@ const fetchSalaryRules = async () => {
     } catch (error) {
       toast.dismiss(loadingToast);
       toast.error("Error deleting salary rule");
-      console.error("Delete salary rule error:", error);
+      console.error("Delete rule error:", error);
     } finally {
       setFormLoading(false);
     }
   };
 
-  // Edit rule click
+  // ✅ Edit rule click 
   const handleEditClick = (rule) => {
     if (!isAdmin) {
       toast.error("Only admin can edit salary rules");
@@ -406,27 +499,37 @@ const fetchSalaryRules = async () => {
     setSelectedRule(rule);
     setForm({
       title: rule.title || "",
-      salaryType: rule.salaryType || "monthly",
+      description: rule.description || "",
+      salaryType: rule.salaryType || "fixed",
       rate: rule.rate || 0,
       overtimeRate: rule.overtimeRate || 0,
-      bonus: rule.bonus || 0,
+      overtimeEnabled: rule.overtimeEnabled || false,
       leaveRule: rule.leaveRule || {
-        paidLeave: 0,
-        unpaidLeave: 0,
-        sickLeave: 0,
-        casualLeave: 0
+        enabled: false,
+        perDayDeduction: 0,
+        paidLeaves: 0
       },
       lateRule: rule.lateRule || {
-        deductionPerLate: 0,
-        maxLateMinutes: 30,
-        gracePeriod: 10
+        enabled: false,
+        lateDaysThreshold: 3,
+        equivalentLeaveDays: 0.5
       },
-      isActive: rule.isActive !== undefined ? rule.isActive : true
+      bonusAmount: rule.bonusAmount || 0,
+      bonusConditions: rule.bonusConditions || "",
+      isActive: rule.isActive !== undefined ? rule.isActive : true,
+      department: rule.department || "",
+      applicableTo: Array.isArray(rule.applicableTo) ? rule.applicableTo : ["all_employees"]
     });
     setShowEditModal(true);
   };
 
-  // Delete rule click
+  // ✅ View details click
+  const handleViewDetails = (rule) => {
+    setSelectedRule(rule);
+    setShowDetailsModal(true);
+  };
+
+  // ✅ Delete confirmation click
   const handleDeleteClick = (rule) => {
     if (!isAdmin) {
       toast.error("Only admin can delete salary rules");
@@ -437,72 +540,47 @@ const fetchSalaryRules = async () => {
     setShowDeleteModal(true);
   };
 
-  // Reset form
-  const resetForm = () => {
-    setForm({
-      title: "",
-      salaryType: "monthly",
-      rate: 0,
-      overtimeRate: 0,
-      bonus: 0,
-      leaveRule: {
-        paidLeave: 0,
-        unpaidLeave: 0,
-        sickLeave: 0,
-        casualLeave: 0
-      },
-      lateRule: {
-        deductionPerLate: 0,
-        maxLateMinutes: 30,
-        gracePeriod: 10
-      },
-      isActive: true
-    });
+  // ✅ Get rule type label based on salaryType
+  const getRuleTypeLabel = (type) => {
+    switch(type) {
+      case 'fixed': return 'Fixed Salary';
+      case 'hourly': return 'Hourly Rate';
+      case 'commission': return 'Commission Based';
+      case 'contract': return 'Contract Based';
+      default: return type || 'Fixed Salary';
+    }
   };
 
-  // Filter rules
+  // ✅ Get rule type color
+  const getRuleTypeColor = (type) => {
+    switch(type) {
+      case 'fixed': return 'bg-blue-100 text-blue-800';
+      case 'hourly': return 'bg-green-100 text-green-800';
+      case 'commission': return 'bg-purple-100 text-purple-800';
+      case 'contract': return 'bg-orange-100 text-orange-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  // ✅ Filter rules
   const filteredRules = salaryRules.filter(rule => {
     const searchLower = searchTerm.toLowerCase();
     const matchesSearch = searchTerm === "" || 
-      rule.title.toLowerCase().includes(searchLower);
+      rule.title?.toLowerCase().includes(searchLower) ||
+      rule.description?.toLowerCase().includes(searchLower);
     
     const matchesType = selectedType === "all" || rule.salaryType === selectedType;
     
     return matchesSearch && matchesType;
   });
 
-  // Format currency
+  // ✅ Format currency
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-BD', {
       style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
+      currency: 'BDT',
+      minimumFractionDigits: 2
     }).format(amount);
-  };
-
-  // Get salary type label
-  const getSalaryTypeLabel = (type) => {
-    switch(type) {
-      case 'monthly': return 'Monthly';
-      case 'hourly': return 'Hourly';
-      case 'weekly': return 'Weekly';
-      case 'biweekly': return 'Bi-Weekly';
-      case 'yearly': return 'Yearly';
-      default: return type;
-    }
-  };
-
-  // Get salary type color
-  const getSalaryTypeColor = (type) => {
-    switch(type) {
-      case 'monthly': return 'bg-blue-100 text-blue-800';
-      case 'hourly': return 'bg-green-100 text-green-800';
-      case 'weekly': return 'bg-purple-100 text-purple-800';
-      case 'biweekly': return 'bg-yellow-100 text-yellow-800';
-      case 'yearly': return 'bg-pink-100 text-pink-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
   };
 
   useEffect(() => {
@@ -511,75 +589,102 @@ const fetchSalaryRules = async () => {
 
   return (
     <>
-      <Toaster position="top-right" />
+      <Toaster 
+        position="top-right" 
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: '#fff',
+            color: '#374151',
+            border: '1px solid #e5e7eb',
+            padding: '16px',
+            borderRadius: '12px',
+            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)',
+          },
+        }}
+      />
       
-      {/* Add Salary Rule Modal */}
+      {/* Add Rule Modal */}
       {showAddModal && isAdmin && (
         <div className="fixed inset-0 backdrop-blur-sm bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-100 sticky top-0 bg-white z-10">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-bold text-gray-900">Create Salary Rule</h2>
-                  <p className="text-gray-500 text-sm mt-1">Define new salary calculation rules</p>
+                  <p className="text-gray-500 text-sm mt-1">Define new salary calculation rule</p>
                 </div>
                 <button
                   onClick={() => {
                     setShowAddModal(false);
                     resetForm();
                   }}
-                  className="text-gray-500 hover:text-gray-700"
+                  className="text-gray-500 hover:text-gray-700 p-1 rounded-lg hover:bg-gray-100 transition-colors"
                 >
                   <X size={20} />
                 </button>
               </div>
             </div>
             
-            <form onSubmit={handleAddSalaryRule} className="p-6 space-y-6">
+            <form onSubmit={handleCreateRule} className="p-6 space-y-6">
               {/* Basic Information */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
+              <div className="bg-gray-50 rounded-xl p-4 mb-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Basic Information</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Rule Title *
+                    </label>
+                    <input
+                      type="text"
+                      name="title"
+                      value={form.title}
+                      onChange={handleChange}
+                      placeholder="E.g., Senior Developer Salary"
+                      required
+                      className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Salary Type *
+                    </label>
+                    <select
+                      name="salaryType"
+                      value={form.salaryType}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                    >
+                      <option value="fixed">Fixed Salary</option>
+                      <option value="hourly">Hourly Rate</option>
+                      <option value="commission">Commission Based</option>
+                      <option value="contract">Contract Based</option>
+                    </select>
+                  </div>
+                </div>
+                
+                <div className="mt-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Rule Title *
+                    Description
                   </label>
-                  <input
-                    type="text"
-                    name="title"
-                    value={form.title}
+                  <textarea
+                    name="description"
+                    value={form.description}
                     onChange={handleChange}
-                    placeholder="E.g., Manager Salary Rule"
-                    required
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
+                    placeholder="Describe this salary rule..."
+                    rows="2"
+                    className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none resize-none"
                   />
                 </div>
                 
-                <div>
+                <div className="mt-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Salary Type *
-                  </label>
-                  <select
-                    name="salaryType"
-                    value={form.salaryType}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                  >
-                    <option value="monthly">Monthly</option>
-                    <option value="hourly">Hourly</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="biweekly">Bi-Weekly</option>
-                    <option value="yearly">Yearly</option>
-                  </select>
-                </div>
-              </div>
-              
-              {/* Rate Information */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Base Rate *
+                    Base Rate/Amount (BDT) *
                   </label>
                   <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">৳</span>
                     <input
                       type="number"
                       name="rate"
@@ -588,195 +693,273 @@ const fetchSalaryRules = async () => {
                       min="0"
                       step="0.01"
                       required
-                      className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                    />
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Overtime Rate (per hour)
-                  </label>
-                  <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                    <input
-                      type="number"
-                      name="overtimeRate"
-                      value={form.overtimeRate}
-                      onChange={handleChange}
-                      min="0"
-                      step="0.01"
-                      className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                    />
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Bonus Amount
-                  </label>
-                  <div className="relative">
-                    <Award className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                    <input
-                      type="number"
-                      name="bonus"
-                      value={form.bonus}
-                      onChange={handleChange}
-                      min="0"
-                      step="0.01"
-                      className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
+                      className="w-full pl-10 pr-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                      placeholder="0.00"
                     />
                   </div>
                 </div>
               </div>
-              
-              {/* Leave Rules */}
-              <div className="border-t border-gray-200 pt-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <Calendar size={20} className="text-blue-500" />
-                  Leave Rules
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Paid Leave (days)
-                    </label>
-                    <input
-                      type="number"
-                      name="leaveRule.paidLeave"
-                      value={form.leaveRule.paidLeave}
-                      onChange={handleChange}
-                      min="0"
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all duration-300"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Unpaid Leave (days)
-                    </label>
-                    <input
-                      type="number"
-                      name="leaveRule.unpaidLeave"
-                      value={form.leaveRule.unpaidLeave}
-                      onChange={handleChange}
-                      min="0"
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all duration-300"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Sick Leave (days)
-                    </label>
-                    <input
-                      type="number"
-                      name="leaveRule.sickLeave"
-                      value={form.leaveRule.sickLeave}
-                      onChange={handleChange}
-                      min="0"
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all duration-300"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Casual Leave (days)
-                    </label>
-                    <input
-                      type="number"
-                      name="leaveRule.casualLeave"
-                      value={form.leaveRule.casualLeave}
-                      onChange={handleChange}
-                      min="0"
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all duration-300"
-                    />
-                  </div>
-                </div>
-              </div>
-              
-              {/* Late Rules */}
-              <div className="border-t border-gray-200 pt-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <Clock size={20} className="text-yellow-500" />
-                  Late Rules
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Deduction per Late ($)
-                    </label>
-                    <div className="relative">
-                      <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                      <input
-                        type="number"
-                        name="lateRule.deductionPerLate"
-                        value={form.lateRule.deductionPerLate}
-                        onChange={handleChange}
-                        min="0"
-                        step="0.01"
-                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none transition-all duration-300"
-                      />
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Max Late Minutes
-                    </label>
-                    <div className="relative">
-                      <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                      <input
-                        type="number"
-                        name="lateRule.maxLateMinutes"
-                        value={form.lateRule.maxLateMinutes}
-                        onChange={handleChange}
-                        min="0"
-                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none transition-all duration-300"
-                      />
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Grace Period (minutes)
-                    </label>
-                    <div className="relative">
-                      <Coffee className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                      <input
-                        type="number"
-                        name="lateRule.gracePeriod"
-                        value={form.lateRule.gracePeriod}
-                        onChange={handleChange}
-                        min="0"
-                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none transition-all duration-300"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Status */}
-              <div className="border-t border-gray-200 pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold text-gray-900">Status</h3>
-                    <p className="text-gray-500 text-sm mt-1">Set rule as active or inactive</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
+
+              {/* Overtime Settings */}
+              <div className="border border-gray-200 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Overtime Settings</h3>
+                  <label className="inline-flex items-center cursor-pointer">
                     <input
                       type="checkbox"
-                      name="isActive"
-                      checked={form.isActive}
+                      name="overtimeEnabled"
+                      checked={form.overtimeEnabled}
                       onChange={handleChange}
                       className="sr-only peer"
                     />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                    <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
                     <span className="ml-3 text-sm font-medium text-gray-900">
-                      {form.isActive ? "Active" : "Inactive"}
+                      Enable Overtime
                     </span>
                   </label>
                 </div>
+                
+                {form.overtimeEnabled && (
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Overtime Rate (per hour)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">৳</span>
+                      <input
+                        type="number"
+                        name="overtimeRate"
+                        value={form.overtimeRate}
+                        onChange={handleChange}
+                        min="0"
+                        step="0.01"
+                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Leave Rule Settings */}
+              <div className="border border-gray-200 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Leave Rule Settings</h3>
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="leaveRule.enabled"
+                      checked={form.leaveRule.enabled}
+                      onChange={handleChange}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    <span className="ml-3 text-sm font-medium text-gray-900">
+                      Enable Leave Rule
+                    </span>
+                  </label>
+                </div>
+                
+                {form.leaveRule.enabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Per Day Deduction
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">৳</span>
+                        <input
+                          type="number"
+                          name="leaveRule.perDayDeduction"
+                          value={form.leaveRule.perDayDeduction}
+                          onChange={handleChange}
+                          min="0"
+                          step="0.01"
+                          className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Paid Leaves (days per month)
+                      </label>
+                      <input
+                        type="number"
+                        name="leaveRule.paidLeaves"
+                        value={form.leaveRule.paidLeaves}
+                        onChange={handleChange}
+                        min="0"
+                        step="1"
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Late Rule Settings */}
+              <div className="border border-gray-200 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Late Rule Settings</h3>
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="lateRule.enabled"
+                      checked={form.lateRule.enabled}
+                      onChange={handleChange}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-600"></div>
+                    <span className="ml-3 text-sm font-medium text-gray-900">
+                      Enable Late Rule
+                    </span>
+                  </label>
+                </div>
+                
+                {form.lateRule.enabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Late Days Threshold
+                      </label>
+                      <input
+                        type="number"
+                        name="lateRule.lateDaysThreshold"
+                        value={form.lateRule.lateDaysThreshold}
+                        onChange={handleChange}
+                        min="1"
+                        step="1"
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Equivalent Leave Days
+                      </label>
+                      <input
+                        type="number"
+                        name="lateRule.equivalentLeaveDays"
+                        value={form.lateRule.equivalentLeaveDays}
+                        onChange={handleChange}
+                        min="0"
+                        step="0.1"
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Bonus Settings */}
+              <div className="border border-gray-200 rounded-xl p-4">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Bonus Settings</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Bonus Amount
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">৳</span>
+                      <input
+                        type="number"
+                        name="bonusAmount"
+                        value={form.bonusAmount}
+                        onChange={handleChange}
+                        min="0"
+                        step="0.01"
+                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Bonus Conditions
+                    </label>
+                    <input
+                      type="text"
+                      name="bonusConditions"
+                      value={form.bonusConditions}
+                      onChange={handleChange}
+                      placeholder="E.g., Performance > 90%"
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Additional Settings */}
+{/* Additional Settings এর applicableTo সেকশনে */}
+<div className="border border-gray-200 rounded-xl p-4">
+  <h3 className="text-lg font-semibold text-gray-900 mb-4">Additional Settings</h3>
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Department (Optional)
+      </label>
+      <input
+        type="text"
+        name="department"
+        value={form.department}
+        onChange={handleChange}
+        placeholder="E.g., Engineering"
+        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+      />
+    </div>
+    
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Applicable To
+      </label>
+      <select
+        multiple
+        name="applicableTo"
+        value={form.applicableTo}
+        onChange={(e) => {
+          const options = e.target.options;
+          const selectedValues = [];
+          for (let i = 0; i < options.length; i++) {
+            if (options[i].selected) {
+              selectedValues.push(options[i].value);
+            }
+          }
+          setForm(prev => ({ ...prev, applicableTo: selectedValues }));
+        }}
+        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none h-32"
+      >
+        <option value="all_employees">All Employees</option>
+        <option value="permanent">Permanent Staff</option>
+        <option value="contractual">Contractual Staff</option>
+        <option value="probation">Probation Staff</option>
+        <option value="intern">Interns</option>
+      </select>
+      <p className="text-xs text-gray-500 mt-1">
+        Hold Ctrl/Cmd to select multiple
+      </p>
+    </div>
+  </div>
+</div>
+
+              {/* Status & Actions */}
+              <div className="flex items-center justify-between border-t border-gray-200 pt-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Status</h3>
+                  <p className="text-gray-500 text-sm mt-1">Set rule as active or inactive</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    name="isActive"
+                    checked={form.isActive}
+                    onChange={handleChange}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                  <span className="ml-3 text-sm font-medium text-gray-900">
+                    {form.isActive ? "Active" : "Inactive"}
+                  </span>
+                </label>
               </div>
               
               <div className="pt-6 border-t border-gray-100">
@@ -787,14 +970,15 @@ const fetchSalaryRules = async () => {
                       setShowAddModal(false);
                       resetForm();
                     }}
-                    className="flex-1 px-4 py-3 border-2 border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all duration-300"
+                    className="flex-1 px-4 py-3 border-2 border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all"
+                    disabled={formLoading}
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={formLoading}
-                    className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl font-semibold hover:opacity-90 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl font-semibold hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     {formLoading ? (
                       <>
@@ -815,15 +999,15 @@ const fetchSalaryRules = async () => {
         </div>
       )}
 
-      {/* Edit Salary Rule Modal */}
+      {/* Edit Rule Modal - Similar to Add but with pre-filled data */}
       {showEditModal && selectedRule && isAdmin && (
         <div className="fixed inset-0 backdrop-blur-sm bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-100 sticky top-0 bg-white z-10">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-bold text-gray-900">Edit Salary Rule</h2>
-                  <p className="text-gray-500 text-sm mt-1">Update salary calculation rules</p>
+                  <p className="text-gray-500 text-sm mt-1">Update salary calculation rule</p>
                 </div>
                 <button
                   onClick={() => {
@@ -831,51 +1015,343 @@ const fetchSalaryRules = async () => {
                     setSelectedRule(null);
                     resetForm();
                   }}
-                  className="text-gray-500 hover:text-gray-700"
+                  className="text-gray-500 hover:text-gray-700 p-1 rounded-lg hover:bg-gray-100 transition-colors"
                 >
                   <X size={20} />
                 </button>
               </div>
             </div>
             
-            <form onSubmit={handleUpdateSalaryRule} className="p-6 space-y-6">
+            <form onSubmit={handleUpdateRule} className="p-6 space-y-6">
               {/* Same form structure as Add Modal */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
+              {/* Basic Information */}
+              <div className="bg-gray-50 rounded-xl p-4 mb-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Basic Information</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Rule Title *
+                    </label>
+                    <input
+                      type="text"
+                      name="title"
+                      value={form.title}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Salary Type *
+                    </label>
+                    <select
+                      name="salaryType"
+                      value={form.salaryType}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                    >
+                      <option value="fixed">Fixed Salary</option>
+                      <option value="hourly">Hourly Rate</option>
+                      <option value="commission">Commission Based</option>
+                      <option value="contract">Contract Based</option>
+                    </select>
+                  </div>
+                </div>
+                
+                <div className="mt-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Rule Title *
+                    Description
                   </label>
-                  <input
-                    type="text"
-                    name="title"
-                    value={form.title}
+                  <textarea
+                    name="description"
+                    value={form.description}
                     onChange={handleChange}
-                    required
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
+                    rows="2"
+                    className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none resize-none"
                   />
                 </div>
                 
-                <div>
+                <div className="mt-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Salary Type *
+                    Base Rate/Amount (BDT) *
                   </label>
-                  <select
-                    name="salaryType"
-                    value={form.salaryType}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                  >
-                    <option value="monthly">Monthly</option>
-                    <option value="hourly">Hourly</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="biweekly">Bi-Weekly</option>
-                    <option value="yearly">Yearly</option>
-                  </select>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">৳</span>
+                    <input
+                      type="number"
+                      name="rate"
+                      value={form.rate}
+                      onChange={handleChange}
+                      min="0"
+                      step="0.01"
+                      required
+                      className="w-full pl-10 pr-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                    />
+                  </div>
                 </div>
               </div>
-              
-              {/* Same form fields as Add Modal */}
-              {/* ... [Rest of the form fields] ... */}
+
+              {/* Overtime Settings */}
+              <div className="border border-gray-200 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Overtime Settings</h3>
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="overtimeEnabled"
+                      checked={form.overtimeEnabled}
+                      onChange={handleChange}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                    <span className="ml-3 text-sm font-medium text-gray-900">
+                      Enable Overtime
+                    </span>
+                  </label>
+                </div>
+                
+                {form.overtimeEnabled && (
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Overtime Rate (per hour)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">৳</span>
+                      <input
+                        type="number"
+                        name="overtimeRate"
+                        value={form.overtimeRate}
+                        onChange={handleChange}
+                        min="0"
+                        step="0.01"
+                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Leave Rule Settings */}
+              <div className="border border-gray-200 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Leave Rule Settings</h3>
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="leaveRule.enabled"
+                      checked={form.leaveRule.enabled}
+                      onChange={handleChange}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    <span className="ml-3 text-sm font-medium text-gray-900">
+                      Enable Leave Rule
+                    </span>
+                  </label>
+                </div>
+                
+                {form.leaveRule.enabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Per Day Deduction
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">৳</span>
+                        <input
+                          type="number"
+                          name="leaveRule.perDayDeduction"
+                          value={form.leaveRule.perDayDeduction}
+                          onChange={handleChange}
+                          min="0"
+                          step="0.01"
+                          className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Paid Leaves (days per month)
+                      </label>
+                      <input
+                        type="number"
+                        name="leaveRule.paidLeaves"
+                        value={form.leaveRule.paidLeaves}
+                        onChange={handleChange}
+                        min="0"
+                        step="1"
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Late Rule Settings */}
+              <div className="border border-gray-200 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Late Rule Settings</h3>
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="lateRule.enabled"
+                      checked={form.lateRule.enabled}
+                      onChange={handleChange}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-600"></div>
+                    <span className="ml-3 text-sm font-medium text-gray-900">
+                      Enable Late Rule
+                    </span>
+                  </label>
+                </div>
+                
+                {form.lateRule.enabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Late Days Threshold
+                      </label>
+                      <input
+                        type="number"
+                        name="lateRule.lateDaysThreshold"
+                        value={form.lateRule.lateDaysThreshold}
+                        onChange={handleChange}
+                        min="1"
+                        step="1"
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Equivalent Leave Days
+                      </label>
+                      <input
+                        type="number"
+                        name="lateRule.equivalentLeaveDays"
+                        value={form.lateRule.equivalentLeaveDays}
+                        onChange={handleChange}
+                        min="0"
+                        step="0.1"
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Bonus Settings */}
+              <div className="border border-gray-200 rounded-xl p-4">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Bonus Settings</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Bonus Amount
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">৳</span>
+                      <input
+                        type="number"
+                        name="bonusAmount"
+                        value={form.bonusAmount}
+                        onChange={handleChange}
+                        min="0"
+                        step="0.01"
+                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Bonus Conditions
+                    </label>
+                    <input
+                      type="text"
+                      name="bonusConditions"
+                      value={form.bonusConditions}
+                      onChange={handleChange}
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Additional Settings */}
+              <div className="border border-gray-200 rounded-xl p-4">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Additional Settings</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Department (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      name="department"
+                      value={form.department}
+                      onChange={handleChange}
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Applicable To
+                    </label>
+                    <select
+                      multiple
+                      name="applicableTo"
+                      value={form.applicableTo}
+                      onChange={(e) => {
+                        const options = e.target.options;
+                        const selectedValues = [];
+                        for (let i = 0; i < options.length; i++) {
+                          if (options[i].selected) {
+                            selectedValues.push(options[i].value);
+                          }
+                        }
+                        setForm(prev => ({ ...prev, applicableTo: selectedValues }));
+                      }}
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none h-32"
+                    >
+                      <option value="all_employees">All Employees</option>
+                      <option value="permanent">Permanent Staff</option>
+                      <option value="contractual">Contractual Staff</option>
+                      <option value="probation">Probation Staff</option>
+                      <option value="intern">Interns</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Hold Ctrl/Cmd to select multiple
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Status & Actions */}
+              <div className="flex items-center justify-between border-t border-gray-200 pt-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Status</h3>
+                  <p className="text-gray-500 text-sm mt-1">Set rule as active or inactive</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    name="isActive"
+                    checked={form.isActive}
+                    onChange={handleChange}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                  <span className="ml-3 text-sm font-medium text-gray-900">
+                    {form.isActive ? "Active" : "Inactive"}
+                  </span>
+                </label>
+              </div>
               
               <div className="pt-6 border-t border-gray-100">
                 <div className="flex gap-3">
@@ -886,14 +1362,15 @@ const fetchSalaryRules = async () => {
                       setSelectedRule(null);
                       resetForm();
                     }}
-                    className="flex-1 px-4 py-3 border-2 border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all duration-300"
+                    className="flex-1 px-4 py-3 border-2 border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all"
+                    disabled={formLoading}
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={formLoading}
-                    className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl font-semibold hover:opacity-90 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl font-semibold hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     {formLoading ? (
                       <>
@@ -902,7 +1379,7 @@ const fetchSalaryRules = async () => {
                       </>
                     ) : (
                       <>
-                        <Edit size={18} />
+                        <Save size={18} />
                         Update Rule
                       </>
                     )}
@@ -929,7 +1406,7 @@ const fetchSalaryRules = async () => {
                     setShowDeleteModal(false);
                     setSelectedRule(null);
                   }}
-                  className="text-gray-500 hover:text-gray-700"
+                  className="text-gray-500 hover:text-gray-700 p-1 rounded-lg hover:bg-gray-100 transition-colors"
                 >
                   <X size={20} />
                 </button>
@@ -955,14 +1432,15 @@ const fetchSalaryRules = async () => {
                     setShowDeleteModal(false);
                     setSelectedRule(null);
                   }}
-                  className="flex-1 px-4 py-3 border-2 border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all duration-300"
+                  className="flex-1 px-4 py-3 border-2 border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all"
+                  disabled={formLoading}
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleDeleteSalaryRule}
+                  onClick={handleDeleteRule}
                   disabled={formLoading}
-                  className="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-pink-600 text-white rounded-xl font-semibold hover:opacity-90 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-pink-600 text-white rounded-xl font-semibold hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {formLoading ? (
                     <>
@@ -982,13 +1460,179 @@ const fetchSalaryRules = async () => {
         </div>
       )}
 
+      {/* Details Modal */}
+      {showDetailsModal && selectedRule && (
+        <div className="fixed inset-0 backdrop-blur-sm bg-black/30 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">Rule Details</h2>
+                  <p className="text-gray-500 text-sm mt-1">Complete information about this rule</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowDetailsModal(false);
+                    setSelectedRule(null);
+                  }}
+                  className="text-gray-500 hover:text-gray-700 p-1 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">{selectedRule.title}</h3>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRuleTypeColor(selectedRule.salaryType)}`}>
+                      {getRuleTypeLabel(selectedRule.salaryType)}
+                    </span>
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                      selectedRule.isActive 
+                        ? 'bg-green-100 text-green-800 border border-green-200' 
+                        : 'bg-gray-100 text-gray-800 border border-gray-200'
+                    }`}>
+                      {selectedRule.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-sm text-gray-500">
+                  ID: {selectedRule._id?.substring(0, 8)}
+                </div>
+              </div>
+              
+              <div>
+                <h4 className="text-sm font-medium text-gray-500 mb-2">Description</h4>
+                <p className="text-gray-700">{selectedRule.description || "No description"}</p>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
+                  <h4 className="text-sm font-medium text-blue-700 mb-2">Salary Details</h4>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-600">Type:</span>
+                      <span className="font-medium">{getRuleTypeLabel(selectedRule.salaryType)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-600">Rate:</span>
+                      <span className="font-medium text-green-700">{formatCurrency(selectedRule.rate)}</span>
+                    </div>
+                    {selectedRule.overtimeEnabled && (
+                      <div className="flex justify-between">
+                        <span className="text-sm text-gray-600">Overtime Rate:</span>
+                        <span className="font-medium text-blue-700">{formatCurrency(selectedRule.overtimeRate)}/hour</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="p-4 bg-green-50 rounded-xl border border-green-100">
+                  <h4 className="text-sm font-medium text-green-700 mb-2">Bonus Details</h4>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-600">Amount:</span>
+                      <span className="font-medium text-green-700">{formatCurrency(selectedRule.bonusAmount)}</span>
+                    </div>
+                    {selectedRule.bonusConditions && (
+                      <div className="text-sm text-gray-600">
+                        Conditions: {selectedRule.bonusConditions}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Leave Rule Details */}
+              {selectedRule.leaveRule?.enabled && (
+                <div className="border border-gray-200 rounded-xl p-4">
+                  <h4 className="text-sm font-medium text-gray-700 mb-3">Leave Rule Settings</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-xs text-gray-500">Per Day Deduction</div>
+                      <div className="font-medium">{formatCurrency(selectedRule.leaveRule.perDayDeduction)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Paid Leaves</div>
+                      <div className="font-medium">{selectedRule.leaveRule.paidLeaves} days/month</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Late Rule Details */}
+              {selectedRule.lateRule?.enabled && (
+                <div className="border border-gray-200 rounded-xl p-4">
+                  <h4 className="text-sm font-medium text-gray-700 mb-3">Late Rule Settings</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-xs text-gray-500">Late Days Threshold</div>
+                      <div className="font-medium">{selectedRule.lateRule.lateDaysThreshold} days</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Equivalent Leave Days</div>
+                      <div className="font-medium">{selectedRule.lateRule.equivalentLeaveDays} days</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Applicable To */}
+              <div className="border-t border-gray-200 pt-6">
+                <div className="text-sm text-gray-500">
+                  {selectedRule.createdBy && (
+                    <span>Created by: {selectedRule.createdBy.name || 'Admin'} • </span>
+                  )}
+                  {selectedRule.createdAt && (
+                    <span>Created: {new Date(selectedRule.createdAt).toLocaleDateString()}</span>
+                  )}
+                  {selectedRule.updatedAt && selectedRule.createdAt !== selectedRule.updatedAt && (
+                    <span> • Updated: {new Date(selectedRule.updatedAt).toLocaleDateString()}</span>
+                  )}
+                </div>
+              </div>
+              
+              {isAdmin && (
+                <div className="pt-6 border-t border-gray-100">
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => {
+                        setShowDetailsModal(false);
+                        handleEditClick(selectedRule);
+                      }}
+                      className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-medium hover:opacity-90 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Edit size={16} />
+                      Edit Rule
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowDetailsModal(false);
+                        handleDeleteClick(selectedRule);
+                      }}
+                      className="flex-1 px-4 py-3 bg-gradient-to-r from-red-600 to-pink-600 text-white rounded-xl font-medium hover:opacity-90 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Trash2 size={16} />
+                      Delete Rule
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Page */}
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50 p-6">
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50 p-4 md:p-6">
         {/* Header */}
         <div className="mb-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+              <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
                 Salary Rules Management
               </h1>
               <div className="flex items-center gap-2 mt-2">
@@ -1010,17 +1654,16 @@ const fetchSalaryRules = async () => {
               <button
                 onClick={fetchSalaryRules}
                 disabled={loading}
-                className="px-4 py-2 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-all duration-300 flex items-center gap-2 disabled:opacity-50 shadow-sm hover:shadow"
+                className="px-4 py-2 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-all flex items-center gap-2 disabled:opacity-50 shadow-sm hover:shadow"
               >
                 <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
                 Refresh
               </button>
               
-              {/* Admin only - Add Rule button */}
               {isAdmin && (
                 <button
                   onClick={() => setShowAddModal(true)}
-                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:opacity-90 transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl"
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:opacity-90 transition-all flex items-center gap-2 shadow-lg hover:shadow-xl"
                 >
                   <Plus size={18} />
                   Add Rule
@@ -1030,61 +1673,61 @@ const fetchSalaryRules = async () => {
           </div>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-300">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-8">
+            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-4 md:p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-500 font-medium">Total Rules</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">{salaryRules.length}</p>
+                  <p className="text-2xl md:text-3xl font-bold text-gray-900 mt-2">{salaryRules.length}</p>
                   <p className="text-xs text-gray-400 mt-1">All salary rules</p>
                 </div>
-                <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
-                  <DollarSign className="text-white" size={24} />
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-gradient-to-r from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
+                  <FileText className="text-white" size={20} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-300">
+            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-4 md:p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-500 font-medium">Active Rules</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">
+                  <p className="text-2xl md:text-3xl font-bold text-gray-900 mt-2">
                     {salaryRules.filter(r => r.isActive).length}
                   </p>
                   <p className="text-xs text-green-500 mt-1">Currently active</p>
                 </div>
-                <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl flex items-center justify-center">
-                  <CheckCircle className="text-white" size={24} />
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl flex items-center justify-center">
+                  <CheckCircle className="text-white" size={20} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-300">
+            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-4 md:p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500 font-medium">Monthly Rules</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">
-                    {salaryRules.filter(r => r.salaryType === 'monthly').length}
+                  <p className="text-sm text-gray-500 font-medium">Fixed Salary</p>
+                  <p className="text-2xl md:text-3xl font-bold text-gray-900 mt-2">
+                    {salaryRules.filter(r => r.salaryType === 'fixed').length}
                   </p>
-                  <p className="text-xs text-blue-500 mt-1">Monthly salary</p>
+                  <p className="text-xs text-blue-500 mt-1">Fixed rate rules</p>
                 </div>
-                <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-cyan-600 rounded-xl flex items-center justify-center">
-                  <Calendar className="text-white" size={24} />
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-gradient-to-r from-blue-500 to-cyan-600 rounded-xl flex items-center justify-center">
+                  <DollarSign className="text-white" size={20} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-300">
+            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-4 md:p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500 font-medium">Hourly Rules</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">
+                  <p className="text-sm text-gray-500 font-medium">Hourly Rate</p>
+                  <p className="text-2xl md:text-3xl font-bold text-gray-900 mt-2">
                     {salaryRules.filter(r => r.salaryType === 'hourly').length}
                   </p>
-                  <p className="text-xs text-yellow-500 mt-1">Hourly wage</p>
+                  <p className="text-xs text-orange-500 mt-1">Hourly based rules</p>
                 </div>
-                <div className="w-12 h-12 bg-gradient-to-r from-yellow-500 to-orange-600 rounded-xl flex items-center justify-center">
-                  <Clock className="text-white" size={24} />
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-gradient-to-r from-orange-500 to-red-600 rounded-xl flex items-center justify-center">
+                  <Clock className="text-white" size={20} />
                 </div>
               </div>
             </div>
@@ -1093,7 +1736,7 @@ const fetchSalaryRules = async () => {
 
         {/* Main Content */}
         <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
-          <div className="p-6 border-b border-gray-100">
+          <div className="p-4 md:p-6 border-b border-gray-100">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Salary Rules</h2>
@@ -1110,21 +1753,20 @@ const fetchSalaryRules = async () => {
                     placeholder="Search rules..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none w-full transition-all duration-300"
+                    className="pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none w-full transition-all"
                   />
                 </div>
                 <div className="flex gap-2">
                   <select
                     value={selectedType}
                     onChange={(e) => setSelectedType(e.target.value)}
-                    className="px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none transition-all duration-300"
+                    className="px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none transition-all"
                   >
                     <option value="all">All Types</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="hourly">Hourly</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="biweekly">Bi-Weekly</option>
-                    <option value="yearly">Yearly</option>
+                    <option value="fixed">Fixed Salary</option>
+                    <option value="hourly">Hourly Rate</option>
+                    <option value="commission">Commission</option>
+                    <option value="contract">Contract</option>
                   </select>
                 </div>
               </div>
@@ -1133,21 +1775,21 @@ const fetchSalaryRules = async () => {
 
           {/* Salary Rules List */}
           {loading ? (
-            <div className="p-12 text-center">
+            <div className="p-8 md:p-12 text-center">
               <div className="inline-flex flex-col items-center">
-                <div className="w-16 h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mb-4"></div>
+                <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mb-4"></div>
                 <p className="text-gray-600 font-medium">Loading salary rules...</p>
                 <p className="text-gray-400 text-sm mt-2">Please wait a moment</p>
               </div>
             </div>
           ) : filteredRules.length === 0 ? (
-            <div className="p-12 text-center">
+            <div className="p-8 md:p-12 text-center">
               <div className="flex flex-col items-center justify-center">
-                <div className="w-20 h-20 bg-gradient-to-r from-gray-100 to-gray-200 rounded-full flex items-center justify-center mb-4">
-                  <DollarSign className="text-gray-400" size={32} />
+                <div className="w-16 h-16 md:w-20 md:h-20 bg-gradient-to-r from-gray-100 to-gray-200 rounded-full flex items-center justify-center mb-4">
+                  <FileText className="text-gray-400" size={24} />
                 </div>
                 <h3 className="text-lg font-semibold text-gray-700 mb-2">No salary rules found</h3>
-                <p className="text-gray-500 max-w-md">
+                <p className="text-gray-500 max-w-md text-sm md:text-base">
                   {searchTerm || selectedType !== "all" 
                     ? 'Try adjusting your search or filters' 
                     : 'Start by creating your first salary rule'}
@@ -1167,18 +1809,18 @@ const fetchSalaryRules = async () => {
               {filteredRules.map((rule) => (
                 <div 
                   key={rule._id}
-                  className="group p-6 hover:bg-gray-50 transition-all duration-300"
+                  className="group p-4 md:p-6 hover:bg-gray-50 transition-all"
                 >
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                     {/* Rule Info */}
                     <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-3">
                         <h3 className="text-lg font-bold text-gray-900 group-hover:text-purple-700 transition-colors">
                           {rule.title}
                         </h3>
-                        <div className="flex items-center gap-2">
-                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${getSalaryTypeColor(rule.salaryType)}`}>
-                            {getSalaryTypeLabel(rule.salaryType)}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRuleTypeColor(rule.salaryType)}`}>
+                            {getRuleTypeLabel(rule.salaryType)}
                           </span>
                           <span className={`px-3 py-1 rounded-full text-xs font-medium ${
                             rule.isActive 
@@ -1187,73 +1829,93 @@ const fetchSalaryRules = async () => {
                           }`}>
                             {rule.isActive ? 'Active' : 'Inactive'}
                           </span>
+                          {rule.overtimeEnabled && (
+                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
+                              Overtime
+                            </span>
+                          )}
+                          {rule.bonusAmount > 0 && (
+                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+                              Bonus
+                            </span>
+                          )}
                         </div>
                       </div>
                       
-                      {/* Rate Details */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                        <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
-                          <div className="text-sm text-blue-700 font-medium">Base Rate</div>
-                          <div className="text-xl font-bold text-blue-900">{formatCurrency(rule.rate)}</div>
-                          <div className="text-xs text-blue-600">
-                            {rule.salaryType === 'hourly' ? 'per hour' : 
-                             rule.salaryType === 'weekly' ? 'per week' : 
-                             rule.salaryType === 'monthly' ? 'per month' : 
-                             rule.salaryType === 'yearly' ? 'per year' : ''}
-                          </div>
-                        </div>
-                        
-                        <div className="p-3 bg-green-50 rounded-lg border border-green-100">
-                          <div className="text-sm text-green-700 font-medium">Overtime Rate</div>
-                          <div className="text-xl font-bold text-green-900">{formatCurrency(rule.overtimeRate || 0)}</div>
-                          <div className="text-xs text-green-600">per hour</div>
-                        </div>
-                        
-                        <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-100">
-                          <div className="text-sm text-yellow-700 font-medium">Bonus</div>
-                          <div className="text-xl font-bold text-yellow-900">{formatCurrency(rule.bonus || 0)}</div>
-                          <div className="text-xs text-yellow-600">additional</div>
-                        </div>
-                      </div>
+                      <p className="text-gray-600 mb-4 text-sm md:text-base">{rule.description || "No description"}</p>
                       
-                      {/* Rule Details */}
-                      <div className="flex flex-wrap gap-4">
+                      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 mb-4">
                         <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <Calendar size={14} className="text-blue-500" />
-                          <span>Leave: Paid {rule.leaveRule?.paidLeave || 0} days</span>
+                          <DollarSign size={14} className="text-green-500" />
+                          <span className="font-medium">Base Rate:</span>
+                          <span className="font-bold text-green-700">{formatCurrency(rule.rate)}</span>
                         </div>
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <Clock size={14} className="text-yellow-500" />
-                          <span>Late: {formatCurrency(rule.lateRule?.deductionPerLate || 0)} deduction</span>
-                        </div>
-                        {rule.createdBy && (
+                        
+                        {rule.overtimeEnabled && (
                           <div className="flex items-center gap-2 text-sm text-gray-600">
-                            <User size={14} className="text-purple-500" />
-                            <span>Created by: {rule.createdBy.name || 'Admin'}</span>
+                            <Clock size={14} className="text-blue-500" />
+                            <span className="font-medium">Overtime:</span>
+                            <span>{formatCurrency(rule.overtimeRate)}/hour</span>
                           </div>
+                        )}
+                        
+                        {rule.leaveRule?.enabled && (
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <Calendar size={14} className="text-red-500" />
+                            <span className="font-medium">Leave Deduction:</span>
+                            <span>{formatCurrency(rule.leaveRule.perDayDeduction)}/day</span>
+                          </div>
+                        )}
+                        
+                        {rule.bonusAmount > 0 && (
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <Award size={14} className="text-yellow-500" />
+                            <span className="font-medium">Bonus:</span>
+                            <span className="font-bold text-yellow-700">{formatCurrency(rule.bonusAmount)}</span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                        <span>ID: {rule._id?.substring(0, 8)}</span>
+                        {rule.createdBy?.name && (
+                          <span>Created by: {rule.createdBy.name}</span>
+                        )}
+                        {rule.createdAt && (
+                          <span>• {new Date(rule.createdAt).toLocaleDateString()}</span>
                         )}
                       </div>
                     </div>
                     
-                    {/* Action Buttons - Admin only */}
-                    {isAdmin && (
-                      <div className="flex items-center gap-2 lg:opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                        <button
-                          onClick={() => handleEditClick(rule)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors duration-200"
-                          title="Edit Rule"
-                        >
-                          <Edit size={18} />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteClick(rule)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors duration-200"
-                          title="Delete Rule"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
-                    )}
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-2 lg:opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => handleViewDetails(rule)}
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="View Details"
+                      >
+                        <Eye size={18} />
+                      </button>
+                      
+                      {isAdmin && (
+                        <>
+                          <button
+                            onClick={() => handleEditClick(rule)}
+                            className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                            title="Edit Rule"
+                          >
+                            <Edit size={18} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteClick(rule)}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete Rule"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1261,39 +1923,41 @@ const fetchSalaryRules = async () => {
           )}
         </div>
 
-        {/* Quick Guide */}
-        <div className="mt-8 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-100">
+        {/* Info Section */}
+        <div className="mt-6 md:mt-8 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-4 md:p-6 border border-blue-100">
           <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-            <Settings size={20} className="text-blue-600" />
+            <Info size={20} className="text-blue-600" />
             How Salary Rules Work
           </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-4 bg-white rounded-xl border border-blue-100">
               <div className="flex items-center gap-2 mb-2">
                 <DollarSign size={16} className="text-green-500" />
-                <span className="font-medium text-gray-700">Base Salary</span>
+                <span className="font-medium text-gray-700">Fixed Salary Rule</span>
               </div>
               <p className="text-sm text-gray-600">
-                The basic rate applied based on salary type (monthly, hourly, etc.)
+                Fixed monthly salary with predefined rate. Suitable for full-time employees.
               </p>
             </div>
             <div className="p-4 bg-white rounded-xl border border-blue-100">
               <div className="flex items-center gap-2 mb-2">
-                <Clock size={16} className="text-yellow-500" />
-                <span className="font-medium text-gray-700">Overtime & Late</span>
+                <Clock size={16} className="text-blue-500" />
+                <span className="font-medium text-gray-700">Hourly Rate Rule</span>
               </div>
               <p className="text-sm text-gray-600">
-                Extra pay for overtime work and deductions for late arrivals
+                Payment based on hours worked. Includes overtime calculations.
               </p>
             </div>
-            <div className="p-4 bg-white rounded-xl border border-blue-100">
-              <div className="flex items-center gap-2 mb-2">
-                <Calendar size={16} className="text-blue-500" />
-                <span className="font-medium text-gray-700">Leave Rules</span>
+          </div>
+          <div className="mt-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+            <div className="flex items-start gap-2">
+              <Info size={16} className="text-yellow-600 mt-0.5" />
+              <div>
+                <p className="text-sm text-yellow-800 font-medium">Note for Admins</p>
+                <p className="text-xs text-yellow-700 mt-1">
+                  Salary rules determine how employee salaries are calculated. Make sure to assign appropriate rules to employees.
+                </p>
               </div>
-              <p className="text-sm text-gray-600">
-                Configure paid, unpaid, sick, and casual leave allowances
-              </p>
             </div>
           </div>
         </div>

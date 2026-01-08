@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   User,
@@ -20,24 +20,26 @@ import {
   CreditCard,
   Eye,
   EyeOff,
-  LogOut,
   History,
   Users,
   CheckCircle,
   AlertCircle,
   Smartphone,
-  Globe,
-  Database,
   ShieldCheck,
   DollarSign,
   Hash,
   BadgeCheck,
   ChevronRight,
-  Key
+  Key,
+  Upload,
+  Camera,
+  Trash2,
+  Image as ImageIcon,
+  Loader2
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 
-export default function UserProfilePage() {
+export default function page() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editMode, setEditMode] = useState(false);
@@ -46,6 +48,11 @@ export default function UserProfilePage() {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [showUploadConfirm, setShowUploadConfirm] = useState(false);
+  const fileInputRef = useRef(null);
   const router = useRouter();
 
   // ইউজারের টাইপ চেক করার জন্য
@@ -55,6 +62,7 @@ export default function UserProfilePage() {
     return null;
   };
 
+  // নতুন Model এর জন্য updated profile form
   const [profileForm, setProfileForm] = useState({
     firstName: "",
     lastName: "",
@@ -65,12 +73,26 @@ export default function UserProfilePage() {
     employeeId: "",
     salaryType: "",
     rate: "",
+    basicSalary: "", // নতুন field
     joiningDate: "",
-    // এডমিনের জন্য অতিরিক্ত ফিল্ড
+    // Admin-specific fields (নতুন Model থেকে)
     companyName: "",
-    position: "",
+    adminPosition: "", // আগেরটা position ছিল
     adminLevel: "",
-    permissions: []
+    permissions: [],
+    isSuperAdmin: false,
+    canManageUsers: false,
+    canManagePayroll: false,
+    // Employee-specific fields (নতুন Model থেকে)
+    managerId: "",
+    attendanceId: "",
+    shiftTiming: {
+      start: "09:00",
+      end: "17:00"
+    },
+    // অন্যান্য fields
+    salary: "", // আপনার original থেকে
+    salaryRule: "" // আপনার original থেকে
   });
 
   const [passwordForm, setPasswordForm] = useState({
@@ -79,7 +101,7 @@ export default function UserProfilePage() {
     confirmPassword: ""
   });
 
-  // Fetch user profile
+  // Fetch user profile - Updated for new model
   const fetchUserProfile = async () => {
     try {
       const userType = getUserType();
@@ -88,13 +110,14 @@ export default function UserProfilePage() {
         : localStorage.getItem("employeeToken");
       
       if (!token) {
-        router.push("/login");
+        router.push("/");
         return;
       }
 
-      const endpoint = userType === "admin" 
-        ? `${process.env.NEXT_PUBLIC_API_URL}/admin/getAdminProfile`
-        : `${process.env.NEXT_PUBLIC_API_URL}/users/getProfile`;
+      // নতুন Model এ সব user একই endpoint থেকে fetch হবে
+      const endpoint = `${process.env.NEXT_PUBLIC_API_URL}/users/getProfile`;
+
+      console.log("Fetching profile from:", endpoint);
 
       const response = await fetch(endpoint, {
         headers: { 
@@ -109,7 +132,7 @@ export default function UserProfilePage() {
         } else {
           localStorage.removeItem("employeeToken");
         }
-        router.push("/login");
+        router.push("/");
         return;
       }
 
@@ -118,29 +141,53 @@ export default function UserProfilePage() {
       if (data.user || (data && typeof data === 'object' && (data.email || data._id))) {
         const userData = data.user || data;
         
-        // নামের জন্য fallback তৈরি করুন
-        const nameParts = (userData.name || userData.email || "").split(' ');
-        const firstName = nameParts[0] || "";
-        const lastName = nameParts.slice(1).join(' ') || "";
+        // Check for locally stored picture
+        const currentUserType = getUserType();
+        const localUserKey = `${currentUserType}UserData`;
+        const localData = JSON.parse(localStorage.getItem(localUserKey) || '{}');
         
-        setUser(userData);
+        // Picture persistence improvement
+        const pictureToUse = userData.picture || localData.picture || null;
         
+        setUser({
+          ...userData,
+          picture: pictureToUse
+        });
+        
+        // নতুন Model এর জন্য updated profile form
         setProfileForm({
-          firstName: userData.firstName || firstName || "",
-          lastName: userData.lastName || lastName || "",
+          firstName: userData.firstName || "",
+          lastName: userData.lastName || "",
           phone: userData.phone || "",
-          address: userData.address || userData.address || "Dhaka, Bangladesh",
+          address: userData.address || "",
           department: userData.department || "",
           designation: userData.designation || "",
           employeeId: userData.employeeId || "",
           salaryType: userData.salaryType || "",
           rate: userData.rate || "",
+          basicSalary: userData.basicSalary || userData.salary || "", // নতুন field
           joiningDate: userData.joiningDate || "",
-          // এডমিনের জন্য অতিরিক্ত ডাটা
-          companyName: userType === "admin" ? (userData.companyName || "") : "",
-          position: userType === "admin" ? (userData.position || "") : "",
-          adminLevel: userType === "admin" ? (userData.adminLevel || "") : "",
-          permissions: userType === "admin" ? (userData.permissions || []) : []
+          // Admin-specific fields
+          companyName: userData.companyName || "",
+          adminPosition: userData.adminPosition || userData.position || "", // backward compatibility
+          adminLevel: userData.adminLevel || "",
+          permissions: userData.permissions || [],
+          isSuperAdmin: userData.isSuperAdmin || false,
+          canManageUsers: userData.canManageUsers || false,
+          canManagePayroll: userData.canManagePayroll || false,
+          // Employee-specific fields
+          managerId: userData.managerId || "",
+          attendanceId: userData.attendanceId || "",
+          shiftTiming: userData.shiftTiming || { start: "09:00", end: "17:00" },
+          // অন্যান্য fields
+          salary: userData.salary || "",
+          salaryRule: userData.salaryRule || ""
+        });
+
+        console.log("User data loaded:", {
+          role: userData.role,
+          hasPicture: !!pictureToUse,
+          isAdmin: userData.role === 'admin'
         });
       } else {
         console.error("Invalid response data:", data);
@@ -180,7 +227,324 @@ export default function UserProfilePage() {
     fetchUserSessions();
   }, []);
 
-  // Update profile
+  // Handle file selection
+  const handleFileSelect = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      toast.error('Please upload a valid image file (JPEG, PNG, GIF, WebP)');
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File size should be less than 5MB');
+      return;
+    }
+
+    setSelectedFile(file);
+    
+    // Show preview immediately
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const previewUrl = e.target.result;
+      
+      // Update state for immediate preview
+      setUser(prev => ({
+        ...prev,
+        picture: previewUrl
+      }));
+      
+      // Save to localStorage for persistence
+      const userType = getUserType();
+      const localUserKey = `${userType}UserData`;
+      const existingData = JSON.parse(localStorage.getItem(localUserKey) || '{}');
+      localStorage.setItem(localUserKey, JSON.stringify({
+        ...existingData,
+        picture: previewUrl,
+        isPreview: true
+      }));
+      
+      toast.success('Preview updated! Click "Upload Photo" to save.');
+    };
+    
+    reader.onerror = () => {
+      toast.error('Failed to load image preview');
+    };
+    
+    reader.readAsDataURL(file);
+  };
+
+  // Handle profile picture upload
+  const handleProfilePictureUpload = async () => {
+    if (!selectedFile) {
+      toast.error('Please select a file first');
+      return;
+    }
+
+    setUploading(true);
+    setUploadProgress(10);
+
+    try {
+      const userType = getUserType();
+      const token = userType === "admin" 
+        ? localStorage.getItem("adminToken") 
+        : localStorage.getItem("employeeToken");
+      
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+
+      const formData = new FormData();
+      formData.append('profilePicture', selectedFile);
+
+      setUploadProgress(30);
+
+      const endpoint = `${process.env.NEXT_PUBLIC_API_URL}/upload-profile-picture`;
+      
+      console.log('Uploading to:', endpoint);
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      setUploadProgress(70);
+
+      if (!response.ok) {
+        let errorMessage = 'Upload failed';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+          console.error('Server error response:', errorData);
+        } catch (e) {
+          errorMessage = `Server error: ${response.status}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      
+      setUploadProgress(100);
+      
+      if (data.success) {
+        // Immediately update state with new picture
+        const pictureUrl = data.pictureUrl;
+        
+        setUser(prev => ({
+          ...prev,
+          picture: pictureUrl
+        }));
+        
+        // Also save to localStorage as backup
+        const userType = getUserType();
+        const localUserKey = `${userType}UserData`;
+        const existingData = JSON.parse(localStorage.getItem(localUserKey) || '{}');
+        localStorage.setItem(localUserKey, JSON.stringify({
+          ...existingData,
+          picture: pictureUrl,
+          serverPicture: pictureUrl,
+          lastUpdated: new Date().toISOString(),
+          isPreview: false
+        }));
+        
+        toast.success(data.message || 'Profile picture uploaded successfully!');
+        
+        // Delay refresh to ensure update
+        setTimeout(() => {
+          fetchUserProfile();
+        }, 500);
+        
+      } else {
+        toast.error(data.message || 'Failed to update profile picture');
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      
+      // Fallback: Save to localStorage temporarily
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const localUrl = e.target.result;
+        
+        // Update state
+        setUser(prev => ({
+          ...prev,
+          picture: localUrl
+        }));
+        
+        // Save to localStorage
+        const userType = getUserType();
+        const localUserKey = `${userType}UserData`;
+        const existingData = JSON.parse(localStorage.getItem(localUserKey) || '{}');
+        localStorage.setItem(localUserKey, JSON.stringify({
+          ...existingData,
+          picture: localUrl,
+          isLocal: true,
+          lastUpdated: new Date().toISOString(),
+          isPreview: false
+        }));
+        
+        toast.success('Profile picture saved locally (server unavailable)');
+      };
+      reader.readAsDataURL(selectedFile);
+      
+      toast.error(error.message || 'Failed to upload profile picture to server');
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+      setSelectedFile(null);
+      setShowUploadConfirm(false);
+      
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  // Delete profile picture
+  const handleDeleteProfilePicture = async () => {
+    if (!user?.picture) {
+      toast.error('No profile picture to remove');
+      return;
+    }
+
+    if (!confirm("Are you sure you want to remove your profile picture? This will delete it from Cloudinary.")) return;
+
+    try {
+      const userType = getUserType();
+      const token = userType === "admin" 
+        ? localStorage.getItem("adminToken") 
+        : localStorage.getItem("employeeToken");
+      
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+
+      const endpoint = `${process.env.NEXT_PUBLIC_API_URL}/remove-profile-picture`;
+      
+      console.log("Deleting profile picture from:", endpoint);
+
+      const response = await fetch(endpoint, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log("Response status:", response.status);
+
+      if (response.status === 400) {
+        const errorData = await response.json();
+        toast.error(errorData.message || 'No profile picture exists');
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = 'Delete failed';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+          console.error('Server error response:', errorData);
+        } catch (e) {
+          errorMessage = `Server error: ${response.status}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      console.log("Delete response data:", data);
+      
+      if (data.success) {
+        // Update local user state
+        setUser(prev => ({
+          ...prev,
+          picture: null
+        }));
+        
+        // Also remove from localStorage
+        const userType = getUserType();
+        const localUserKey = `${userType}UserData`;
+        const existingData = JSON.parse(localStorage.getItem(localUserKey) || '{}');
+        const { picture, serverPicture, isLocal, isPreview, ...restData } = existingData;
+        localStorage.setItem(localUserKey, JSON.stringify(restData));
+        
+        toast.success(data.message || 'Profile picture removed successfully from Cloudinary!');
+        
+        // Refresh profile data
+        setTimeout(() => {
+          fetchUserProfile();
+        }, 300);
+      } else {
+        toast.error(data.message || 'Failed to remove profile picture');
+      }
+    } catch (error) {
+      console.error('Delete error:', error);
+      
+      if (error.message.includes('No profile picture') || error.message.includes('404')) {
+        toast.error('No profile picture exists to remove');
+        
+        // Still update UI to remove any local references
+        setUser(prev => ({
+          ...prev,
+          picture: null
+        }));
+        
+        // Remove from localStorage
+        const userType = getUserType();
+        const localUserKey = `${userType}UserData`;
+        const existingData = JSON.parse(localStorage.getItem(localUserKey) || '{}');
+        const { picture, serverPicture, isLocal, isPreview, ...restData } = existingData;
+        localStorage.setItem(localUserKey, JSON.stringify(restData));
+      } else {
+        toast.error(error.message || 'Failed to remove profile picture');
+      }
+    }
+  };
+
+  // Trigger file input click
+  const triggerFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Cancel file selection
+  const cancelFileSelection = () => {
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    
+    // Restore previous picture
+    const userType = getUserType();
+    const localUserKey = `${userType}UserData`;
+    const localData = JSON.parse(localStorage.getItem(localUserKey) || '{}');
+    
+    // Better picture restoration logic
+    if (localData.picture && !localData.isPreview) {
+      setUser(prev => ({
+        ...prev,
+        picture: localData.picture
+      }));
+    } else if (user?.picture && !user.picture.includes('data:') && !user.picture.includes('preview')) {
+      // Keep server picture if exists
+    } else {
+      setUser(prev => ({
+        ...prev,
+        picture: null
+      }));
+    }
+  };
+
+  // Update profile - Updated for new model
   const handleUpdateProfile = async () => {
     try {
       const userType = getUserType();
@@ -188,9 +552,8 @@ export default function UserProfilePage() {
         ? localStorage.getItem("adminToken") 
         : localStorage.getItem("employeeToken");
       
-      const endpoint = userType === "admin" 
-        ? `${process.env.NEXT_PUBLIC_API_URL}/admin/updateAdminProfile`
-        : `${process.env.NEXT_PUBLIC_API_URL}/users/updateProfile`;
+      // নতুন Model এ সব user একই endpoint এ update হবে
+      const endpoint = `${process.env.NEXT_PUBLIC_API_URL}/users/updateProfile`;
 
       const updateData = {
         firstName: profileForm.firstName,
@@ -202,16 +565,25 @@ export default function UserProfilePage() {
         employeeId: profileForm.employeeId,
         salaryType: profileForm.salaryType,
         rate: profileForm.rate,
-        joiningDate: profileForm.joiningDate
+        basicSalary: profileForm.basicSalary, // নতুন field
+        joiningDate: profileForm.joiningDate,
+        salary: profileForm.salary, // আপনার original থেকে
+        // Role-specific fields
+        ...(user?.role === "admin" && {
+          companyName: profileForm.companyName,
+          adminPosition: profileForm.adminPosition,
+          adminLevel: profileForm.adminLevel,
+          permissions: profileForm.permissions,
+          isSuperAdmin: profileForm.isSuperAdmin,
+          canManageUsers: profileForm.canManageUsers,
+          canManagePayroll: profileForm.canManagePayroll
+        }),
+        ...(user?.role === "employee" && {
+          managerId: profileForm.managerId,
+          attendanceId: profileForm.attendanceId,
+          shiftTiming: profileForm.shiftTiming
+        })
       };
-
-      // শুধু এডমিনের জন্য অতিরিক্ত ফিল্ড যোগ করুন
-      if (userType === "admin") {
-        updateData.companyName = profileForm.companyName;
-        updateData.position = profileForm.position;
-        updateData.adminLevel = profileForm.adminLevel;
-        updateData.permissions = profileForm.permissions;
-      }
 
       const response = await fetch(endpoint, {
         method: "POST",
@@ -254,9 +626,8 @@ export default function UserProfilePage() {
         ? localStorage.getItem("adminToken") 
         : localStorage.getItem("employeeToken");
       
-      const endpoint = userType === "admin" 
-        ? `${process.env.NEXT_PUBLIC_API_URL}/auth/admin/change-password`
-        : `${process.env.NEXT_PUBLIC_API_URL}/auth/change-password`;
+      // নতুন Model এ সব user একই endpoint এ password change হবে
+      const endpoint = `${process.env.NEXT_PUBLIC_API_URL}/users/change-password`;
 
       const response = await fetch(endpoint, {
         method: "POST",
@@ -270,72 +641,21 @@ export default function UserProfilePage() {
         })
       });
 
-      const data = await response.json();
-
-      if (response.ok) {
-        toast.success("Password changed successfully!");
-        setPasswordForm({
-          currentPassword: "",
-          newPassword: "",
-          confirmPassword: ""
-        });
-      } else {
-        toast.error(data.message || "Failed to change password");
-      }
-    } catch (error) {
-      toast.error("Network error. Please try again.");
-    }
-  };
-
-  // Request password reset from admin
-  const handleRequestPasswordReset = async () => {
-    if (!confirm("Send password reset request to admin?")) return;
-
-    try {
-      const token = localStorage.getItem("employeeToken");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/request-password-reset`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          userId: user?._id,
-          reason: "Requested password reset by employee",
-          requestedAt: new Date().toISOString()
-        })
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        toast.success("Password reset request sent to admin!");
-      } else {
-        toast.error(data.message || "Failed to send request");
-      }
-    } catch (error) {
-      toast.error("Network error. Please try again.");
-    }
-  };
-
-  // View reset history
-  const handleViewResetHistory = async () => {
-    try {
-      const userType = getUserType();
-      const token = userType === "admin" 
-        ? localStorage.getItem("adminToken") 
-        : localStorage.getItem("employeeToken");
-      
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/password-reset-history`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
       if (response.ok) {
         const data = await response.json();
-        console.log("Reset history:", data);
-        toast.success("Reset history loaded");
+        if (data.success) {
+          toast.success("Password changed successfully!");
+          setPasswordForm({
+            currentPassword: "",
+            newPassword: "",
+            confirmPassword: ""
+          });
+        } else {
+          toast.error(data.message || "Failed to change password");
+        }
       } else {
-        toast.error("Failed to load reset history");
+        const data = await response.json();
+        toast.error(data.message || "Failed to change password");
       }
     } catch (error) {
       toast.error("Network error. Please try again.");
@@ -352,15 +672,26 @@ export default function UserProfilePage() {
         ? localStorage.getItem("adminToken") 
         : localStorage.getItem("employeeToken");
       
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/logout-all`, {
+      const endpoint = `${process.env.NEXT_PUBLIC_API_URL}/logout-all`;
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      toast.success("Logged out from all devices");
-      fetchUserSessions();
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          toast.success("Logged out from all devices");
+          fetchUserSessions();
+        } else {
+          toast.error(data.message || "Failed to logout");
+        }
+      } else {
+        toast.error("Failed to logout from all sessions");
+      }
     } catch (error) {
-      toast.error("Failed to logout from all sessions");
+      toast.error("Network error. Please try again.");
     }
   };
 
@@ -374,33 +705,71 @@ export default function UserProfilePage() {
         ? localStorage.getItem("adminToken") 
         : localStorage.getItem("employeeToken");
       
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/terminate-session/${sessionId}`, {
+      const endpoint = `${process.env.NEXT_PUBLIC_API_URL}/terminate-session/${sessionId}`;
+
+      const response = await fetch(endpoint, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      toast.success("Session terminated");
-      fetchUserSessions();
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          toast.success("Session terminated");
+          fetchUserSessions();
+        } else {
+          toast.error(data.message || "Failed to terminate session");
+        }
+      } else {
+        toast.error("Failed to terminate session");
+      }
     } catch (error) {
-      toast.error("Failed to terminate session");
+      toast.error("Network error. Please try again.");
     }
   };
 
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch (error) {
+      return "Invalid Date";
+    }
   };
 
   const formatCurrency = (amount) => {
-    if (!amount) return "N/A";
+    if (!amount && amount !== 0) return "N/A";
     return new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
     }).format(amount);
+  };
+
+  // Get user initials for avatar
+  const getUserInitials = () => {
+    if (!user) return "U";
+    const firstName = user.firstName || user.name?.split(' ')[0] || user.email?.split('@')[0] || "U";
+    const lastName = user.lastName || user.name?.split(' ').slice(1).join(' ') || "";
+    return `${firstName.charAt(0)}${lastName.charAt(0) || ''}`.toUpperCase();
+  };
+
+  // Check if user has a valid picture
+  const hasValidPicture = () => {
+    return user?.picture && user.picture !== null && user.picture !== '' && user.picture !== 'null' && user.picture !== 'undefined';
+  };
+
+  // Check if user is admin
+  const isAdmin = () => {
+    return user?.role === "admin";
+  };
+
+  // Check if user is employee
+  const isEmployee = () => {
+    return user?.role === "employee";
   };
 
   if (loading) {
@@ -438,34 +807,137 @@ export default function UserProfilePage() {
           <div className="lg:col-span-1">
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden sticky top-6">
               {/* Profile Header */}
-              <div className="bg-gradient-to-r from-purple-600 to-pink-600 p-6">
-                <div className="flex flex-col items-center">
-                  <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center mb-4 border-4 border-white shadow-xl">
-                    {user?.picture ? (
-                      <img
-                        src={user.picture}
-                        alt={user.firstName}
-                        className="w-full h-full rounded-full object-cover"
-                      />
-                    ) : getUserType() === "admin" ? (
-                      <Shield className="text-purple-600" size={48} />
-                    ) : (
-                      <User className="text-purple-600" size={48} />
+              <div className="bg-gradient-to-r from-purple-600 to-pink-600 p-6 relative">
+                <div className="flex flex-col items-center relative">
+                  {/* Profile Picture Container */}
+                  <div className="relative group mb-4">
+                    <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center border-4 border-white shadow-xl overflow-hidden">
+                      {hasValidPicture() ? (
+                        <img
+                          src={user.picture}
+                          alt={user.firstName || user.name}
+                          className="w-full h-full object-cover rounded-full"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.style.display = 'none';
+                            e.target.parentElement.innerHTML = `
+                              <div class="w-full h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                                <span class="text-white text-2xl font-bold">${getUserInitials()}</span>
+                              </div>
+                            `;
+                          }}
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-2xl font-bold">
+                            {getUserInitials()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Upload Overlay - Show only when in edit mode */}
+                    {editMode && (
+                      <div className="absolute inset-0 rounded-full bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                        <button
+                          onClick={triggerFileInput}
+                          disabled={uploading}
+                          className="bg-white p-2 rounded-full hover:bg-gray-100 transition-colors"
+                          title="Change photo"
+                        >
+                          <Camera className="text-gray-700" size={20} />
+                        </button>
+                        
+                        {hasValidPicture() && !selectedFile && (
+                          <button
+                            onClick={handleDeleteProfilePicture}
+                            disabled={uploading}
+                            className="absolute top-0 right-0 bg-red-500 text-white p-1.5 rounded-full hover:bg-red-600 transition-colors"
+                            title="Remove photo"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Upload Progress */}
+                    {uploading && (
+                      <div className="absolute inset-0 rounded-full bg-black bg-opacity-70 flex items-center justify-center">
+                        <div className="text-white text-center">
+                          <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                          <p className="text-xs">{uploadProgress}%</p>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  <h2 className="text-xl font-bold text-white">
+                  
+                  {/* Hidden File Input */}
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileSelect}
+                    accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                    className="hidden"
+                  />
+                  
+                  <h2 className="text-xl font-bold text-white text-center">
                     {user?.firstName || user?.name?.split(' ')[0] || user?.email?.split('@')[0]} {user?.lastName || user?.name?.split(' ').slice(1).join(' ') || ''}
                   </h2>
-                  <p className="text-purple-100 mt-1">{user?.email}</p>
+                  <p className="text-purple-100 mt-1 text-center">{user?.email}</p>
                   <div className="mt-3">
                     <span className={`px-3 py-1 text-white rounded-full text-sm font-medium ${
-                      getUserType() === "admin" 
+                      isAdmin() 
                         ? "bg-gradient-to-r from-indigo-500 to-purple-500" 
                         : "bg-gradient-to-r from-blue-500 to-cyan-500"
                     }`}>
-                      {getUserType() === "admin" ? "ADMINISTRATOR" : "EMPLOYEE"}
+                      {isAdmin() ? "ADMINISTRATOR" : "EMPLOYEE"}
                     </span>
                   </div>
+                  
+                  {/* Upload/Cancel Buttons - Show only in edit mode */}
+                  {editMode && (
+                    <div className="mt-4 flex flex-col gap-2 w-full">
+                      <button
+                        onClick={triggerFileInput}
+                        disabled={uploading}
+                        className="w-full px-4 py-2 bg-opacity-20 hover:bg-opacity-30 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Camera size={14} />
+                        {uploading ? 'Uploading...' : selectedFile ? 'Change Selection' : 'Upload Photo'}
+                      </button>
+                      
+                      {selectedFile && (
+                        <div className="flex gap-2 w-full">
+                          <button
+                            onClick={() => setShowUploadConfirm(true)}
+                            disabled={uploading}
+                            className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                          >
+                            {uploading ? (
+                              <>
+                                <Loader2 className="animate-spin" size={14} />
+                                Uploading...
+                              </>
+                            ) : (
+                              <>
+                                <Upload size={14} />
+                                Save Photo
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={cancelFileSelection}
+                            disabled={uploading}
+                            className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                          >
+                            <X size={14} />
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -516,7 +988,7 @@ export default function UserProfilePage() {
                     </div>
                   </div>
 
-                  {getUserType() === "admin" && user?.adminLevel && (
+                  {isAdmin() && user?.adminLevel && (
                     <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
@@ -557,9 +1029,9 @@ export default function UserProfilePage() {
                     <span className="text-sm text-purple-600">Update</span>
                   </button>
 
-                  {getUserType() === "admin" && (
+                  {isAdmin() && (
                     <button
-                      onClick={() => router.push("/admin/users")}
+                      onClick={() => router.push("/user-roles")}
                       className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors"
                     >
                       <div className="flex items-center gap-3">
@@ -632,7 +1104,6 @@ export default function UserProfilePage() {
                         <button
                           onClick={() => {
                             setEditMode(false);
-                            // Reset form to original values
                             fetchUserProfile();
                           }}
                           className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
@@ -651,9 +1122,62 @@ export default function UserProfilePage() {
                     )}
                   </div>
 
-                  {/* View Mode - Beautiful Profile Display */}
+                  {/* View Mode - No change options */}
                   {!editMode ? (
                     <div className="space-y-6">
+                      {/* Profile Picture View Card - NO CHANGE OPTIONS */}
+                      <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-2xl p-6 border border-purple-100">
+                        <div className="flex items-center justify-between mb-6">
+                          <h4 className="text-lg font-bold text-gray-900 flex items-center gap-3">
+                            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm">
+                              <ImageIcon className="text-purple-600" size={22} />
+                            </div>
+                            Profile Picture
+                          </h4>
+                        </div>
+                        
+                        <div className="flex flex-col items-center">
+                          <div className="relative mb-4">
+                            <div className="w-32 h-32 bg-white rounded-full flex items-center justify-center border-4 border-white shadow-lg overflow-hidden">
+                              {hasValidPicture() ? (
+                                <img
+                                  src={user.picture}
+                                  alt={user.firstName || user.name}
+                                  className="w-full h-full object-cover rounded-full"
+                                  onError={(e) => {
+                                    e.target.onerror = null;
+                                    e.target.style.display = 'none';
+                                    e.target.parentElement.innerHTML = `
+                                      <div class="w-full h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                                        <span class="text-white text-4xl font-bold">${getUserInitials()}</span>
+                                      </div>
+                                    `;
+                                  }}
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                                  <span className="text-white text-4xl font-bold">
+                                    {getUserInitials()}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="text-center">
+                            <p className="text-gray-700">
+                              {hasValidPicture() ? 
+                                "Your profile picture is visible to other users" : 
+                                "No profile picture uploaded yet"
+                              }
+                            </p>
+                            <p className="text-sm text-gray-500 mt-2">
+                              Click "Edit Profile" to upload or change your profile picture
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
                       {/* Basic Info Card */}
                       <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-2xl p-6 border border-purple-100">
                         <div className="flex items-center justify-between mb-6">
@@ -701,15 +1225,15 @@ export default function UserProfilePage() {
                               <p className="text-sm text-gray-500 mb-1">address</p>
                               <div className="flex items-center gap-2">
                                 <MapPin className="text-gray-400" size={16} />
-                                <p className="text-lg font-semibold text-gray-900">{user?.address || user?.address || "Not provided"}</p>
+                                <p className="text-lg font-semibold text-gray-900">{user?.address || "Not provided"}</p>
                               </div>
                             </div>
                           </div>
                         </div>
                       </div>
 
-                      {/* Admin Information Card (শুধু এডমিন দেখতে পাবে) */}
-                      {getUserType() === "admin" && (
+                      {/* Admin Information Card */}
+                      {isAdmin() && (
                         <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-6 border border-indigo-100">
                           <h4 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-3">
                             <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm">
@@ -735,7 +1259,7 @@ export default function UserProfilePage() {
                                 <div className="flex items-center gap-2">
                                   <BadgeCheck className="text-gray-400" size={16} />
                                   <p className="text-lg font-semibold text-gray-900">
-                                    {user?.position || "Administrator"}
+                                    {user?.adminPosition || user?.position || "Administrator"}
                                   </p>
                                 </div>
                               </div>
@@ -825,8 +1349,8 @@ export default function UserProfilePage() {
                         </div>
                       </div>
 
-                      {/* Salary Info Card (এমপ্লয়ির জন্য শো করবে) */}
-                      {getUserType() === "employee" && (
+                      {/* Salary Info Card (Employee এর জন্য) */}
+                      {isEmployee() && user?.salaryType && (
                         <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl p-6 border border-green-100">
                           <h4 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-3">
                             <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm">
@@ -835,12 +1359,12 @@ export default function UserProfilePage() {
                             Salary Information
                           </h4>
                           
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div>
                               <p className="text-sm text-gray-500 mb-1">Salary Type</p>
                               <div className="flex items-center gap-2">
                                 <CreditCard className="text-gray-400" size={16} />
-                                <p className="text-lg font-semibold text-gray-900 capitalize">{user?.salaryType || "Not set"}</p>
+                                <p className="text-lg font-semibold text-gray-900 capitalize">{user?.salaryType}</p>
                               </div>
                             </div>
                             
@@ -850,6 +1374,16 @@ export default function UserProfilePage() {
                                 <DollarSign className="text-gray-400" size={16} />
                                 <p className="text-lg font-semibold text-gray-900">
                                   ৳{formatCurrency(user?.rate)} {user?.salaryType ? `/${user.salaryType}` : ''}
+                                </p>
+                              </div>
+                            </div>
+                            
+                            <div>
+                              <p className="text-sm text-gray-500 mb-1">Basic Salary</p>
+                              <div className="flex items-center gap-2">
+                                <DollarSign className="text-gray-400" size={16} />
+                                <p className="text-lg font-semibold text-gray-900">
+                                  ৳{formatCurrency(user?.basicSalary || user?.salary)}
                                 </p>
                               </div>
                             </div>
@@ -886,8 +1420,10 @@ export default function UserProfilePage() {
                             
                             <div>
                               <p className="text-sm text-gray-500 mb-1">Account Role</p>
-                              <div className="flex items-center gap-2 px-4 py-3 bg-purple-50 text-purple-800 rounded-xl">
-                                <Shield className="text-purple-600" size={18} />
+                              <div className={`flex items-center gap-2 px-4 py-3 rounded-xl ${
+                                isAdmin() ? 'bg-purple-50 text-purple-800' : 'bg-blue-50 text-blue-800'
+                              }`}>
+                                <Shield className={isAdmin() ? "text-purple-600" : "text-blue-600"} size={18} />
                                 <p className="font-semibold capitalize">{user?.role || 'N/A'}</p>
                               </div>
                             </div>
@@ -914,8 +1450,126 @@ export default function UserProfilePage() {
                       </div>
                     </div>
                   ) : (
-                    /* Edit Mode - Input Forms */
+                    /* Edit Mode - Input Forms - With upload options */
                     <div className="space-y-6">
+                      {/* Profile Picture Upload Section - Edit mode has upload */}
+                      <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-100">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                              <ImageIcon className="text-purple-600" size={20} />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-gray-900">Profile Picture</h4>
+                              <p className="text-sm text-gray-600">Update your profile photo</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={triggerFileInput}
+                              disabled={uploading}
+                              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Camera size={16} />
+                              {selectedFile ? 'Change' : 'Change Photo'}
+                            </button>
+                            
+                            {selectedFile && (
+                              <button
+                                onClick={() => setShowUploadConfirm(true)}
+                                disabled={uploading}
+                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <Upload size={16} />
+                                Save
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-6">
+                          <div className="relative">
+                            <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-white shadow-sm overflow-hidden">
+                              {hasValidPicture() ? (
+                                <img
+                                  src={user.picture}
+                                  alt={user.firstName || user.name}
+                                  className="w-full h-full object-cover rounded-full"
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                                  <span className="text-white text-2xl font-bold">
+                                    {getUserInitials()}
+                                  </span>
+                                </div>
+                              )}
+                              
+                              {uploading && (
+                                <div className="absolute inset-0 rounded-full bg-black bg-opacity-70 flex items-center justify-center">
+                                  <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="flex-1">
+                            <div className="space-y-2">
+                              <p className="text-sm text-gray-700">
+                                Click the upload button to change your profile picture.
+                              </p>
+                              <div className="flex gap-2">
+                                {selectedFile && (
+                                  <button
+                                    onClick={cancelFileSelection}
+                                    className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center gap-1"
+                                  >
+                                    <X size={14} />
+                                    Cancel Preview
+                                  </button>
+                                )}
+                                
+                                {hasValidPicture() && !selectedFile && (
+                                  <button
+                                    onClick={handleDeleteProfilePicture}
+                                    className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center gap-1"
+                                  >
+                                    <Trash2 size={14} />
+                                    Remove current photo
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Upload Confirmation Modal */}
+                        {showUploadConfirm && (
+                          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                            <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4">
+                              <h3 className="text-lg font-bold text-gray-900 mb-4">Confirm Upload</h3>
+                              <p className="text-gray-600 mb-6">
+                                Are you sure you want to upload this image as your new profile picture?
+                              </p>
+                              <div className="flex gap-3">
+                                <button
+                                  onClick={() => setShowUploadConfirm(false)}
+                                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={handleProfilePictureUpload}
+                                  disabled={uploading}
+                                  className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50"
+                                >
+                                  {uploading ? 'Uploading...' : 'Yes, Upload'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
                       {/* Basic Info Section */}
                       <div>
                         <h4 className="font-bold text-gray-900 mb-4 text-lg">Basic Information</h4>
@@ -992,8 +1646,8 @@ export default function UserProfilePage() {
                         </div>
                       </div>
 
-                      {/* Admin Information Section (শুধু এডমিনের জন্য) */}
-                      {getUserType() === "admin" && (
+                      {/* Admin Information Section */}
+                      {isAdmin() && (
                         <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-4 border border-indigo-100">
                           <h4 className="font-bold text-gray-900 mb-4 flex items-center gap-2 text-lg">
                             <Shield size={18} />
@@ -1019,8 +1673,8 @@ export default function UserProfilePage() {
                               </label>
                               <input
                                 type="text"
-                                value={profileForm.position}
-                                onChange={(e) => setProfileForm({...profileForm, position: e.target.value})}
+                                value={profileForm.adminPosition}
+                                onChange={(e) => setProfileForm({...profileForm, adminPosition: e.target.value})}
                                 className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                               />
                             </div>
@@ -1117,15 +1771,15 @@ export default function UserProfilePage() {
                         </div>
                       </div>
 
-                      {/* Salary Info Section (এমপ্লয়ির জন্য) */}
-                      {getUserType() === "employee" && (
+                      {/* Salary Info Section (Employee এর জন্য) */}
+                      {isEmployee() && (
                         <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-4 border border-green-100">
                           <h4 className="font-bold text-gray-900 mb-4 flex items-center gap-2 text-lg">
                             <CreditCard size={18} />
                             Salary Information
                           </h4>
                           
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                               <label className="block text-sm font-medium text-gray-700 mb-2">
                                 Salary Type
@@ -1140,6 +1794,9 @@ export default function UserProfilePage() {
                                 <option value="hourly">Hourly</option>
                                 <option value="weekly">Weekly</option>
                                 <option value="yearly">Yearly</option>
+                                <option value="project">Project</option>
+                                <option value="commission">Commission</option>
+                                <option value="fixed">Fixed</option>
                               </select>
                             </div>
 
@@ -1154,6 +1811,18 @@ export default function UserProfilePage() {
                                 className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
                               />
                             </div>
+
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Basic Salary (৳)
+                              </label>
+                              <input
+                                type="number"
+                                value={profileForm.basicSalary}
+                                onChange={(e) => setProfileForm({...profileForm, basicSalary: e.target.value})}
+                                className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                              />
+                            </div>
                           </div>
                         </div>
                       )}
@@ -1164,185 +1833,9 @@ export default function UserProfilePage() {
 
               {/* Security Tab */}
               {activeTab === "security" && (
-                <div className="p-6">
-                  <div className="mb-6">
-                    <h3 className="text-lg font-bold text-gray-900">Security Settings</h3>
-                    <p className="text-gray-600 mt-1">Manage your password and security preferences</p>
-                  </div>
+                <div className="p-6"> 
 
-                  <div className="space-y-6">
-                    {/* Change Password */}
-                    <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl p-6 border border-purple-100">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                            <Lock className="text-purple-600" size={20} />
-                          </div>
-                          <div>
-                            <h4 className="font-bold text-gray-900">Change Password</h4>
-                            <p className="text-sm text-gray-600">Update your current password</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Current Password
-                          </label>
-                          <div className="relative">
-                            <input
-                              type={showCurrentPassword ? "text" : "password"}
-                              value={passwordForm.currentPassword}
-                              onChange={(e) => setPasswordForm({...passwordForm, currentPassword: e.target.value})}
-                              className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none pr-10"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                              className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
-                            >
-                              {showCurrentPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            New Password
-                          </label>
-                          <div className="relative">
-                            <input
-                              type={showNewPassword ? "text" : "password"}
-                              value={passwordForm.newPassword}
-                              onChange={(e) => setPasswordForm({...passwordForm, newPassword: e.target.value})}
-                              className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none pr-10"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowNewPassword(!showNewPassword)}
-                              className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
-                            >
-                              {showNewPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Confirm New Password
-                          </label>
-                          <div className="relative">
-                            <input
-                              type={showConfirmPassword ? "text" : "password"}
-                              value={passwordForm.confirmPassword}
-                              onChange={(e) => setPasswordForm({...passwordForm, confirmPassword: e.target.value})}
-                              className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none pr-10"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                              className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
-                            >
-                              {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                            </button>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={handleChangePassword}
-                          className="w-full bg-purple-600 text-white py-3 rounded-lg font-medium hover:bg-purple-700 transition-colors"
-                        >
-                          Update Password
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Password Reset Request (এমপ্লয়ির জন্য) */}
-                    {getUserType() === "employee" && (
-                      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-100">
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                              <Key className="text-blue-600" size={20} />
-                            </div>
-                            <div>
-                              <h4 className="font-bold text-gray-900">Password Reset Request</h4>
-                              <p className="text-sm text-gray-600">Request admin to reset your password</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-4">
-                          <div className="bg-white rounded-lg p-4 border border-gray-200">
-                            <p className="text-sm text-gray-600">
-                              If you've forgotten your password, you can request an administrator to reset it for you. An email notification will be sent to the admin.
-                            </p>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <button
-                              onClick={handleRequestPasswordReset}
-                              className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
-                            >
-                              <Shield size={18} />
-                              Request Password Reset
-                            </button>
-                            
-                            <button
-                              onClick={handleViewResetHistory}
-                              className="w-full border-2 border-blue-200 text-blue-600 py-3 rounded-lg font-medium hover:bg-blue-50 transition-colors flex items-center justify-center gap-2"
-                            >
-                              <History size={18} />
-                              View History
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Admin Security Settings (এডমিনের জন্য) */}
-                    {getUserType() === "admin" && (
-                      <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-6 border border-indigo-100">
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-                              <ShieldCheck className="text-indigo-600" size={20} />
-                            </div>
-                            <div>
-                              <h4 className="font-bold text-gray-900">Admin Security Settings</h4>
-                              <p className="text-sm text-gray-600">Administrator specific security options</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-4">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <button
-                              onClick={() => router.push("/admin/users")}
-                              className="w-full bg-indigo-600 text-white py-3 rounded-lg font-medium hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
-                            >
-                              <Users size={18} />
-                              Manage Users
-                            </button>
-                            
-                            <button
-                              onClick={() => router.push("/admin/audit-logs")}
-                              className="w-full border-2 border-indigo-200 text-indigo-600 py-3 rounded-lg font-medium hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2"
-                            >
-                              <History size={18} />
-                              View Audit Logs
-                            </button>
-                          </div>
-                          
-                          <div className="bg-white rounded-lg p-4 border border-gray-200">
-                            <p className="text-sm text-gray-600">
-                              <span className="font-semibold text-indigo-600">Note:</span> As an administrator, you have additional privileges to manage system users and security settings. Use these features responsibly.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                  <div className="space-y-6"> 
 
                     {/* Session Management */}
                     <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl p-6 border border-blue-100">
@@ -1400,10 +1893,6 @@ export default function UserProfilePage() {
                           <CheckCircle className="text-green-600 mt-0.5" size={14} />
                           <p className="text-sm text-gray-600">Avoid using personal information in passwords</p>
                         </div>
-                        <div className="flex items-start gap-2">
-                          <CheckCircle className="text-green-600 mt-0.5" size={14} />
-                          <p className="text-sm text-gray-600">Change your password every 90 days for optimal security</p>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -1435,9 +1924,9 @@ export default function UserProfilePage() {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {sessions.map((session) => (
+                      {sessions.map((session, index) => (
                         <div
-                          key={session._id}
+                          key={session._id || `session-${index}`}
                           className="bg-gray-50 rounded-xl p-4 border border-gray-200 hover:bg-white transition-colors"
                         >
                           <div className="flex items-center justify-between mb-3">
@@ -1447,17 +1936,17 @@ export default function UserProfilePage() {
                               }`}></div>
                               <div>
                                 <p className="font-medium text-gray-900">
-                                  {session.device?.substring(0, 50)}...
+                                  {session.device || "Unknown Device"}
                                 </p>
-                                <p className="text-sm text-gray-500">{session.ip}</p>
+                                <p className="text-sm text-gray-500">{session.ip || "Unknown IP"}</p>
                               </div>
                             </div>
                             <div className="text-right">
                               <p className="text-sm font-medium text-gray-900">
-                                {new Date(session.loginAt).toLocaleDateString()}
+                                {session.loginAt ? new Date(session.loginAt).toLocaleDateString() : "N/A"}
                               </p>
                               <p className="text-xs text-gray-500">
-                                {new Date(session.loginAt).toLocaleTimeString()}
+                                {session.loginAt ? new Date(session.loginAt).toLocaleTimeString() : "N/A"}
                               </p>
                             </div>
                           </div>
@@ -1466,7 +1955,7 @@ export default function UserProfilePage() {
                             <div className="flex items-center gap-4">
                               <span className="text-gray-600">
                                 <Clock size={14} className="inline mr-1" />
-                                Login: {new Date(session.loginAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                Login: {session.loginAt ? new Date(session.loginAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "N/A"}
                               </span>
                               {session.logoutAt && (
                                 <span className="text-gray-600">
@@ -1476,7 +1965,7 @@ export default function UserProfilePage() {
                               )}
                             </div>
 
-                            {!session.logoutAt && session._id !== sessions[0]?._id && (
+                            {!session.logoutAt && index !== 0 && (
                               <button
                                 onClick={() => handleTerminateSession(session._id)}
                                 className="px-3 py-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors text-sm"
@@ -1485,29 +1974,6 @@ export default function UserProfilePage() {
                               </button>
                             )}
                           </div>
-
-                          {session.activities && session.activities.length > 0 && (
-                            <div className="mt-3 pt-3 border-t border-gray-200">
-                              <p className="text-xs font-medium text-gray-700 mb-2">Activities:</p>
-                              <div className="space-y-1">
-                                {session.activities.slice(0, 3).map((activity, idx) => (
-                                  <div key={idx} className="flex items-center gap-2 text-xs text-gray-600">
-                                    <Activity size={12} />
-                                    <span>{activity.action}</span>
-                                    <span className="text-gray-400">•</span>
-                                    <span className="text-gray-500">
-                                      {new Date(activity.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                    </span>
-                                  </div>
-                                ))}
-                                {session.activities.length > 3 && (
-                                  <p className="text-xs text-purple-600 mt-1">
-                                    +{session.activities.length - 3} more activities
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          )}
                         </div>
                       ))}
                     </div>

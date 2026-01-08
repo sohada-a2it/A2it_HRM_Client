@@ -166,7 +166,7 @@ const UnifiedLogin = () => {
         // Admin login
       //   router.push("/dashboard");
       // }
-      router.push("/dashboard");
+      router.push("/profile");
     } catch (err) {
       const errorMsg = err.response?.data?.message || "Login failed. Please check your credentials.";
       

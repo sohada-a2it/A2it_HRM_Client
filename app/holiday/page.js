@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { Toaster, toast } from "react-hot-toast";
 
-export default function HolidaysPage() {
+export default function page() {
   const router = useRouter();
   const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -60,13 +60,15 @@ export default function HolidaysPage() {
   };
 
   // Get token based on user type
-  const getToken = () => {
-    const userType = getUserType();
-    return userType === "admin" 
-      ? localStorage.getItem("adminToken") 
-      : localStorage.getItem("employeeToken");
-  };
-
+// Get token based on user type
+const getToken = () => {
+  const userType = getUserType();
+  const token = userType === "admin" 
+    ? localStorage.getItem("adminToken") 
+    : localStorage.getItem("employeeToken");
+  
+  return token || null; // Ensure null is returned if no token
+};
   // Fetch user profile and role
   const fetchUserProfile = async () => {
     try {
@@ -115,65 +117,93 @@ export default function HolidaysPage() {
   };
 
   // Fetch holidays
-  const fetchHolidays = async () => {
-    setLoading(true);
-    const loadingToast = toast.loading("Loading holidays...");
+const fetchHolidays = async () => {
+  setLoading(true);
+  const loadingToast = toast.loading("Loading holidays...");
+  
+  try {
+    // First fetch user profile
+    const userProfile = await fetchUserProfile();
+    if (userProfile) {
+      setUserData(userProfile);
+      const userType = getUserType();
+      setUserRole(userType);
+      setIsAdmin(userType === "admin");
+    } else {
+      // User not logged in or token expired
+      toast.dismiss(loadingToast);
+      toast.error("Please login to continue");
+      router.push("/login");
+      return;
+    }
     
-    try {
-      // Fetch user profile to get role
-      const userProfile = await fetchUserProfile();
-      if (userProfile) {
-        setUserData(userProfile);
-        const userType = getUserType();
-        setUserRole(userType);
-        setIsAdmin(userType === "admin");
-      }
-      
-      const token = getToken();
-      
-      // Prepare headers
-      const headers = {
-        "Content-Type": "application/json"
-      };
-      
-      // Add authorization header if token exists
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      
-      // Fetch holidays
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/getAllHoliday`, {
-        headers: headers
-      });
+    // Build query parameters
+    const params = new URLSearchParams();
+    if (selectedYear !== "all") params.append('year', selectedYear);
+    if (selectedType !== "all") params.append('type', selectedType);
+    if (searchTerm) params.append('search', searchTerm);
+    
+    const queryString = params.toString();
+    let endpoint = `${process.env.NEXT_PUBLIC_API_URL}/holiday`;
+    if (queryString) {
+      endpoint += `?${queryString}`;
+    }
+    
+    console.log("🌐 Fetching holidays from:", endpoint);
+    
+    const token = getToken(); // Get token here
+    
+    // Set headers conditionally based on token
+    const headers = {
+      "Content-Type": "application/json"
+    };
+    
+    // Only add Authorization header if token exists
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    
+    const response = await fetch(endpoint, {
+      headers: headers
+    });
 
-      const data = await response.json();
-      
-      if (data.status === "success") {
-        setHolidays(data.holidays || []);
-        toast.dismiss(loadingToast);
-        toast.success(`Loaded ${data.holidays?.length || 0} holidays`, {
-          icon: '🎉',
-          duration: 3000,
-        });
-      } else {
-        toast.dismiss(loadingToast);
-        toast.error(data.message || "Failed to load holidays");
-      }
-    } catch (error) {
+    const data = await response.json();
+    console.log("📊 API Response:", data);
+    
+    if (data.status === "success") {
+      setHolidays(data.holidays || []);
+      toast.dismiss(loadingToast);
+      toast.success(`Loaded ${data.holidays?.length || 0} holidays`, {
+        icon: '🎉',
+        duration: 3000,
+      });
+    } else {
       toast.dismiss(loadingToast);
       
-      if (error.response?.status === 403) {
-        toast.error("Access denied. Please contact administrator.");
+      // Handle unauthorized access
+      if (response.status === 401 || response.status === 403) {
+        toast.error("Session expired. Please login again.");
+        localStorage.removeItem("adminToken");
+        localStorage.removeItem("employeeToken");
+        router.push("/login");
       } else {
-        toast.error("Error loading holidays");
+        toast.error(data.message || "Failed to load holidays");
       }
-      
-      console.error("Fetch holidays error:", error);
-    } finally {
-      setLoading(false);
-      setLoadingRole(false);
     }
-  };
+  } catch (error) {
+    toast.dismiss(loadingToast);
+    console.error("❌ Fetch holidays error:", error);
+    
+    if (error.message?.includes('NetworkError') || error.message?.includes('Failed to fetch')) {
+      toast.error("Network error. Please check your connection.");
+    } else {
+      toast.error("Error loading holidays");
+    }
+  } finally {
+    setLoading(false);
+    setLoadingRole(false);
+  }
+};
 
   // Handle form change
   const handleChange = (e) => {
@@ -181,179 +211,182 @@ export default function HolidaysPage() {
   };
 
   // Add new holiday - Admin only
-  const handleAddHoliday = async (e) => {
-    e.preventDefault();
+const handleAddHoliday = async (e) => {
+  e.preventDefault();
+  
+  if (!isAdmin) {
+    toast.error("Only admin can create holidays");
+    return;
+  }
+  
+  setFormLoading(true);
+  const loadingToast = toast.loading("Adding holiday...");
+  
+  try {
+    const token = getToken();
     
-    if (!isAdmin) {
+    if (!token) {
+      toast.error("Authentication required");
+      return;
+    }
+
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(form)
+    });
+
+    const data = await response.json();
+    console.log("Add holiday response:", data);
+    
+    if (response.status === 403) {
       toast.error("Only admin can create holidays");
       return;
     }
     
-    setFormLoading(true);
-    const loadingToast = toast.loading("Adding holiday...");
-    
-    try {
-      const token = getToken();
-      
-      if (!token) {
-        toast.error("Authentication required");
-        return;
-      }
-
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/addHoliday`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(form)
-      });
-
-      const data = await response.json();
-      
-      if (response.status === 403) {
-        toast.error("Only admin can create holidays");
-        return;
-      }
-      
-      if (data.status === "success") {
-        toast.dismiss(loadingToast);
-        toast.success("Holiday added successfully!", {
-          icon: '✅',
-          duration: 3000,
-        });
-        
-        setShowAddModal(false);
-        setForm({ title: "", date: "", type: "GOVT" });
-        fetchHolidays();
-      } else {
-        toast.dismiss(loadingToast);
-        toast.error(data.message || "Failed to add holiday");
-      }
-    } catch (error) {
+    if (data.status === "success") {
       toast.dismiss(loadingToast);
-      toast.error("Error adding holiday");
-      console.error("Add holiday error:", error);
-    } finally {
-      setFormLoading(false);
+      toast.success(data.message || "Holiday added successfully!", {
+        icon: '✅',
+        duration: 3000,
+      });
+      
+      setShowAddModal(false);
+      setForm({ title: "", date: "", type: "GOVT" });
+      fetchHolidays(); // Refresh the list
+    } else {
+      toast.dismiss(loadingToast);
+      toast.error(data.message || "Failed to add holiday");
     }
-  };
+  } catch (error) {
+    toast.dismiss(loadingToast);
+    console.error("❌ Add holiday error:", error);
+    toast.error("Error adding holiday. Please try again.");
+  } finally {
+    setFormLoading(false);
+  }
+};
 
   // Update holiday - Admin only
-  const handleUpdateHoliday = async (e) => {
-    e.preventDefault();
+const handleUpdateHoliday = async (e) => {
+  e.preventDefault();
+  
+  if (!isAdmin) {
+    toast.error("Only admin can update holidays");
+    return;
+  }
+  
+  setFormLoading(true);
+  const loadingToast = toast.loading("Updating holiday...");
+  
+  try {
+    const token = getToken();
     
-    if (!isAdmin) {
+    if (!token) {
+      toast.error("Authentication required");
+      return;
+    }
+
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/updateHoliday/${selectedHoliday._id}`, {
+      method: "PUT",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(form)
+    });
+
+    const data = await response.json();
+    console.log("Update holiday response:", data);
+    
+    if (response.status === 403) {
       toast.error("Only admin can update holidays");
       return;
     }
     
-    setFormLoading(true);
-    const loadingToast = toast.loading("Updating holiday...");
-    
-    try {
-      const token = getToken();
-      
-      if (!token) {
-        toast.error("Authentication required");
-        return;
-      }
-
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/editHoliday/${selectedHoliday._id}`, {
-        method: "PUT",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(form)
-      });
-
-      const data = await response.json();
-      
-      if (response.status === 403) {
-        toast.error("Only admin can update holidays");
-        return;
-      }
-      
-      if (data.status === "success") {
-        toast.dismiss(loadingToast);
-        toast.success("Holiday updated successfully!", {
-          icon: '✅',
-          duration: 3000,
-        });
-        
-        setShowEditModal(false);
-        setSelectedHoliday(null);
-        setForm({ title: "", date: "", type: "GOVT" });
-        fetchHolidays();
-      } else {
-        toast.dismiss(loadingToast);
-        toast.error(data.message || "Failed to update holiday");
-      }
-    } catch (error) {
+    if (data.status === "success") {
       toast.dismiss(loadingToast);
-      toast.error("Error updating holiday");
-      console.error("Update holiday error:", error);
-    } finally {
-      setFormLoading(false);
+      toast.success(data.message || "Holiday updated successfully!", {
+        icon: '✅',
+        duration: 3000,
+      });
+      
+      setShowEditModal(false);
+      setSelectedHoliday(null);
+      setForm({ title: "", date: "", type: "GOVT" });
+      fetchHolidays(); // Refresh the list
+    } else {
+      toast.dismiss(loadingToast);
+      toast.error(data.message || "Failed to update holiday");
     }
-  };
+  } catch (error) {
+    toast.dismiss(loadingToast);
+    console.error("❌ Update holiday error:", error);
+    toast.error("Error updating holiday. Please try again.");
+  } finally {
+    setFormLoading(false);
+  }
+};
 
   // Delete holiday - Admin only
-  const handleDeleteHoliday = async () => {
-    if (!isAdmin) {
+const handleDeleteHoliday = async () => {
+  if (!isAdmin) {
+    toast.error("Only admin can delete holidays");
+    return;
+  }
+  
+  setFormLoading(true);
+  const loadingToast = toast.loading("Deleting holiday...");
+  
+  try {
+    const token = getToken();
+    
+    if (!token) {
+      toast.error("Authentication required");
+      return;
+    }
+
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/deleteHoliday/${selectedHoliday._id}`, {
+      method: "DELETE",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    const data = await response.json();
+    console.log("Delete holiday response:", data);
+    
+    if (response.status === 403) {
       toast.error("Only admin can delete holidays");
       return;
     }
     
-    setFormLoading(true);
-    const loadingToast = toast.loading("Deleting holiday...");
-    
-    try {
-      const token = getToken();
-      
-      if (!token) {
-        toast.error("Authentication required");
-        return;
-      }
-
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/deleteHoliday/${selectedHoliday._id}`, {
-        method: "DELETE",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json"
-        }
-      });
-
-      const data = await response.json();
-      
-      if (response.status === 403) {
-        toast.error("Only admin can delete holidays");
-        return;
-      }
-      
-      if (data.status === "success") {
-        toast.dismiss(loadingToast);
-        toast.success("Holiday deleted successfully!", {
-          icon: '🗑️',
-          duration: 3000,
-        });
-        
-        setShowDeleteModal(false);
-        setSelectedHoliday(null);
-        fetchHolidays();
-      } else {
-        toast.dismiss(loadingToast);
-        toast.error(data.message || "Failed to delete holiday");
-      }
-    } catch (error) {
+    if (data.status === "success") {
       toast.dismiss(loadingToast);
-      toast.error("Error deleting holiday");
-      console.error("Delete holiday error:", error);
-    } finally {
-      setFormLoading(false);
+      toast.success(data.message || "Holiday deleted successfully!", {
+        icon: '🗑️',
+        duration: 3000,
+      });
+      
+      setShowDeleteModal(false);
+      setSelectedHoliday(null);
+      fetchHolidays(); // Refresh the list
+    } else {
+      toast.dismiss(loadingToast);
+      toast.error(data.message || "Failed to delete holiday");
     }
-  };
+  } catch (error) {
+    toast.dismiss(loadingToast);
+    console.error("❌ Delete holiday error:", error);
+    toast.error("Error deleting holiday. Please try again.");
+  } finally {
+    setFormLoading(false);
+  }
+};
 
   // Edit holiday click
   const handleEditClick = (holiday) => {

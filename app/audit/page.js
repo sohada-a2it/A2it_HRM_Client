@@ -53,7 +53,7 @@ import {
 } from "lucide-react";
 import { Toaster, toast } from "react-hot-toast";
 
-export default function AuditLogsPage() {
+export default function page() {
   const router = useRouter();
   
   // State
@@ -865,7 +865,6 @@ export default function AuditLogsPage() {
               </div>
             </div>
           )}
-
           {/* Search and Filters Section */}
           <div className="bg-white rounded-2xl shadow-xl border border-gray-100 mb-8 overflow-hidden">
             <div className="p-6 border-b border-gray-100">
@@ -1047,296 +1046,411 @@ export default function AuditLogsPage() {
           </div>
 
           {/* Logs Table Section */}
-          <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
-            <div className="p-6 border-b border-gray-100">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+<div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
+  <div className="p-4 md:p-6 border-b border-gray-100">
+    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <FileText className="text-indigo-600 flex-shrink-0" size={22} />
+          <h2 className="text-lg md:text-xl font-bold text-gray-900 truncate">
+            Audit Logs
+          </h2>
+          <span className="text-sm font-normal text-gray-500 whitespace-nowrap">
+            ({logs.length} log{logs.length !== 1 ? 's' : ''} found)
+          </span>
+        </div>
+        <p className="text-gray-500 text-sm mt-1 truncate">
+          {viewMode === 'all' ? 'All system activities' : 'Your personal activity history'}
+        </p>
+      </div>
+      
+      <div className="flex items-center gap-2 md:gap-4 flex-wrap">
+        <div className="text-sm text-gray-500 bg-gray-50 px-2 md:px-3 py-1.5 rounded-lg whitespace-nowrap">
+          Page {currentPage} of {totalPages}
+        </div>
+        <div className="flex gap-1">
+          <button
+            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+            disabled={currentPage === 1}
+            className="p-2 md:p-2.5 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 flex-shrink-0"
+            title="Previous Page"
+          >
+            <ChevronRight className="rotate-180" size={18} />
+          </button>
+          <button
+            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+            disabled={currentPage === totalPages}
+            className="p-2 md:p-2.5 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 flex-shrink-0"
+            title="Next Page"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {loading ? (
+    <div className="p-8 md:p-12 text-center">
+      <div className="inline-flex flex-col items-center">
+        <Loader2 size={48} className="animate-spin text-indigo-600 mb-4" />
+        <p className="text-gray-600 font-medium">Loading audit logs...</p>
+        <p className="text-gray-400 text-sm mt-2">Please wait while we fetch the data</p>
+      </div>
+    </div>
+  ) : logs.length === 0 ? (
+    <div className="p-8 md:p-12 text-center">
+      <div className="flex flex-col items-center justify-center">
+        <div className="w-16 h-16 md:w-20 md:h-20 bg-gradient-to-r from-gray-100 to-gray-200 rounded-full flex items-center justify-center mb-4">
+          <FileText className="text-gray-400" size={24} />
+        </div>
+        <h3 className="text-lg font-semibold text-gray-700 mb-2">No audit logs found</h3>
+        <p className="text-gray-500 max-w-md mb-6 text-sm md:text-base">
+          {filters.search || filters.action || filters.startDate 
+            ? 'No logs match your filters. Try adjusting your search criteria.'
+            : 'No audit logs available for the selected view.'}
+        </p>
+        {(filters.search || filters.action || filters.startDate) && (
+          <button
+            onClick={clearFilters}
+            className="px-4 py-2 md:px-5 md:py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:opacity-90 transition-all duration-300 font-medium text-sm md:text-base"
+          >
+            Clear all filters
+          </button>
+        )}
+      </div>
+    </div>
+  ) : (
+    <>
+      {/* Mobile Card View for small screens */}
+      <div className="md:hidden p-4 space-y-4">
+        {logs.map((log) => (
+          <div key={log._id || Math.random()} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow duration-200">
+            {/* Header with Action and Actions */}
+            <div className="flex justify-between items-start mb-3">
+              <div className="flex items-center gap-2">
+                {getActionIcon(safeString(log.action))}
                 <div>
-                  <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                    <FileText className="text-indigo-600" size={22} />
-                    Audit Logs
-                    <span className="ml-2 text-sm font-normal text-gray-500">
-                      ({logs.length} log{logs.length !== 1 ? 's' : ''} found)
-                    </span>
-                  </h2>
-                  <p className="text-gray-500 text-sm mt-1">
-                    {viewMode === 'all' ? 'All system activities' : 'Your personal activity history'}
-                  </p>
-                </div>
-                
-                <div className="flex items-center gap-4">
-                  <div className="text-sm text-gray-500 bg-gray-50 px-3 py-1.5 rounded-lg">
-                    Page {currentPage} of {totalPages}
+                  <h3 className="font-semibold text-gray-900 text-sm">
+                    {safeString(log.action, 'Unknown Action')}
+                  </h3>
+                  <div className="flex items-center gap-1 mt-1">
+                    <div className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getActionColor(safeString(log.action))}`}>
+                      {safeString(log.actionType, 'System')}
+                    </div>
+                    {getSeverityBadge(safeString(log.action))}
                   </div>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                      disabled={currentPage === 1}
-                      className="p-2.5 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
-                      title="Previous Page"
-                    >
-                      <ChevronRight className="rotate-180" size={18} />
-                    </button>
-                    <button
-                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                      disabled={currentPage === totalPages}
-                      className="p-2.5 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
-                      title="Next Page"
-                    >
-                      <ChevronRight size={18} />
-                    </button>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => viewLogDetails(log)}
+                  className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                  title="View Details"
+                >
+                  <Eye size={16} />
+                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => deleteLog(log._id)}
+                    className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
+                    title="Delete Log"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* User Info (Admin only) */}
+            {isAdmin && viewMode === 'all' && log.userId && typeof log.userId === 'object' && (
+              <div className="mb-3 p-2 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <User size={14} className="text-gray-500" />
+                  <span className="text-xs font-medium text-gray-700">User:</span>
+                  <span className="text-xs text-gray-600 truncate">
+                    {safeString(log.userId.firstName)} {safeString(log.userId.lastName)}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500 truncate mt-1">
+                  {safeString(log.userId.email)}
+                </div>
+              </div>
+            )}
+
+            {/* Details */}
+            <div className="mb-3">
+              <div className="text-xs font-medium text-gray-700 mb-1">Details:</div>
+              <div className="text-sm text-gray-900 line-clamp-2">
+                {typeof log.details === 'object' 
+                  ? JSON.stringify(log.details).substring(0, 100) + '...'
+                  : safeString(log.details, 'No details available').substring(0, 100)}
+              </div>
+            </div>
+
+            {/* Device and IP */}
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div className="flex items-center gap-2">
+                {getDeviceIcon(safeString(log.device))}
+                <div>
+                  <div className="text-xs font-medium text-gray-700">Device</div>
+                  <div className="text-xs text-gray-600 truncate">
+                    {safeString(log.device, 'Unknown')}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Wifi size={14} className="text-gray-400" />
+                <div>
+                  <div className="text-xs font-medium text-gray-700">IP Address</div>
+                  <div className="text-xs text-gray-600 font-mono truncate">
+                    {safeString(log.ip, 'N/A')}
                   </div>
                 </div>
               </div>
             </div>
 
-            {loading ? (
-              <div className="p-12 text-center">
-                <div className="inline-flex flex-col items-center">
-                  <Loader2 size={48} className="animate-spin text-indigo-600 mb-4" />
-                  <p className="text-gray-600 font-medium">Loading audit logs...</p>
-                  <p className="text-gray-400 text-sm mt-2">Please wait while we fetch the data</p>
+            {/* Timestamp */}
+            <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+              <div>
+                <div className="text-xs font-medium text-gray-900">
+                  {new Date(safeString(log.createdAt)).toLocaleDateString()}
+                </div>
+                <div className="text-xs text-gray-500 flex items-center gap-1">
+                  <Clock size={10} />
+                  {new Date(safeString(log.createdAt)).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                 </div>
               </div>
-            ) : logs.length === 0 ? (
-              <div className="p-12 text-center">
-                <div className="flex flex-col items-center justify-center">
-                  <div className="w-20 h-20 bg-gradient-to-r from-gray-100 to-gray-200 rounded-full flex items-center justify-center mb-4">
-                    <FileText className="text-gray-400" size={32} />
-                  </div>
-                  <h3 className="text-lg font-semibold text-gray-700 mb-2">No audit logs found</h3>
-                  <p className="text-gray-500 max-w-md mb-6">
-                    {filters.search || filters.action || filters.startDate 
-                      ? 'No logs match your filters. Try adjusting your search criteria.'
-                      : 'No audit logs available for the selected view.'}
-                  </p>
-                  {(filters.search || filters.action || filters.startDate) && (
-                    <button
-                      onClick={clearFilters}
-                      className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:opacity-90 transition-all duration-300 font-medium"
-                    >
-                      Clear all filters
-                    </button>
-                  )}
-                </div>
+              <div className="text-xs text-gray-500">
+                {timeAgo(safeString(log.createdAt))}
               </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200">
-                      <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Action</th>
-                      {isAdmin && viewMode === 'all' && (
-                        <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">User</th>
-                      )}
-                      <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Details</th>
-                      <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Device</th>
-                      <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">IP Address</th>
-                      <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Timestamp</th>
-                      <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {logs.map((log) => (
-                      <tr 
-                        key={log._id || Math.random()} 
-                        className="hover:bg-gray-50 transition-colors duration-200 group"
-                      >
-                        <td className="py-4 px-6">
-                          <div className="flex items-center gap-3">
-                            <div className="flex-shrink-0">
-                              {getActionIcon(safeString(log.action))}
-                            </div>
-                            <div>
-                              <div className="font-semibold text-gray-900 group-hover:text-indigo-700 transition-colors">
-                                {safeString(log.action, 'Unknown Action')}
-                              </div>
-                              <div className="flex items-center gap-2 mt-1">
-                                <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getActionColor(safeString(log.action))}`}>
-                                  {safeString(log.actionType, 'System')}
-                                </div>
-                                {getSeverityBadge(safeString(log.action))}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        
-                        {isAdmin && viewMode === 'all' && (
-                          <td className="py-4 px-6">
-                            {log.userId && typeof log.userId === 'object' ? (
-                              <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-gradient-to-r from-indigo-100 to-purple-100 rounded-full flex items-center justify-center shadow-sm">
-                                  <User className="text-indigo-600" size={18} />
-                                </div>
-                                <div>
-                                  <div className="font-medium text-gray-900">
-                                    {safeString(log.userId.firstName)} {safeString(log.userId.lastName)}
-                                  </div>
-                                  <div className="text-xs text-gray-500">
-                                    {safeString(log.userId.email, 'No email')}
-                                  </div>
-                                  <div className="text-xs text-gray-400 mt-0.5">
-                                    <span className="px-1.5 py-0.5 bg-gray-100 rounded">
-                                      {safeString(log.userId.role, 'Unknown Role')}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-2 text-gray-400">
-                                <Server size={14} />
-                                <span className="text-sm">System Action</span>
-                              </div>
-                            )}
-                          </td>
-                        )}
-                        
-                        <td className="py-4 px-6">
-                          <div className="max-w-xs">
-                            <div className="text-sm text-gray-900 font-medium truncate" title={safeString(log.details)}>
-                              {typeof log.details === 'object' 
-                                ? JSON.stringify(log.details) 
-                                : safeString(log.details, 'No details available')}
-                            </div>
-                            {log.additionalInfo && (
-                              <div className="text-xs text-gray-500 mt-1 truncate">
-                                Additional data available
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                        
-                        <td className="py-4 px-6">
-                          <div className="flex items-center gap-2">
-                            <div className="flex-shrink-0">
-                              {getDeviceIcon(safeString(log.device))}
-                            </div>
-                            <div className="text-sm text-gray-700">
-                              {safeString(log.device, 'Unknown Device')}
-                            </div>
-                          </div>
-                        </td>
-                        
-                        <td className="py-4 px-6">
-                          <div className="flex items-center gap-2">
-                            <Wifi className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                            <div className="font-mono text-sm text-gray-700">
-                              {safeString(log.ip, 'N/A')}
-                            </div>
-                            {log.ip && (
-                              <button
-                                onClick={() => copyToClipboard(log.ip)}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-100 rounded"
-                                title="Copy IP"
-                              >
-                                <Copy size={12} className="text-gray-400" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                        
-                        <td className="py-4 px-6">
-                          <div className="flex flex-col">
-                            <div className="text-sm font-medium text-gray-900">
-                              {formatDate(safeString(log.createdAt))}
-                            </div>
-                            <div className="text-xs text-gray-500 flex items-center gap-1 mt-1">
-                              <Clock size={12} />
-                              {timeAgo(safeString(log.createdAt))}
-                            </div>
-                          </div>
-                        </td>
-                        
-                        <td className="py-4 px-6">
-                          <div className="flex items-center space-x-2">
-                            <button
-                              onClick={() => viewLogDetails(log)}
-                              className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors duration-200"
-                              title="View Details"
-                            >
-                              <Eye size={18} />
-                            </button>
-                            {isAdmin && (
-                              <button
-                                onClick={() => deleteLog(log._id)}
-                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors duration-200"
-                                title="Delete Log"
-                              >
-                                <Trash2 size={18} />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => copyToClipboard(JSON.stringify(log, null, 2))}
-                              className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors duration-200"
-                              title="Copy Log Data"
-                            >
-                              <Copy size={18} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Pagination Footer */}
-            {logs.length > 0 && (
-              <div className="p-6 border-t border-gray-100">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="text-sm text-gray-500">
-                    Showing {((currentPage - 1) * 20) + 1} to {Math.min(currentPage * 20, totalLogs)} of {totalLogs} logs
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                      disabled={currentPage === 1}
-                      className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 flex items-center gap-2"
-                    >
-                      <ChevronRight className="rotate-180" size={16} />
-                      Previous
-                    </button>
-                    <div className="flex gap-1">
-                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                        let pageNum;
-                        if (totalPages <= 5) {
-                          pageNum = i + 1;
-                        } else if (currentPage <= 3) {
-                          pageNum = i + 1;
-                        } else if (currentPage >= totalPages - 2) {
-                          pageNum = totalPages - 4 + i;
-                        } else {
-                          pageNum = currentPage - 2 + i;
-                        }
-                        
-                        return (
-                          <button
-                            key={pageNum}
-                            onClick={() => setCurrentPage(pageNum)}
-                            className={`w-10 h-10 rounded-lg transition-all duration-300 ${
-                              currentPage === pageNum
-                                ? 'bg-indigo-600 text-white shadow-md'
-                                : 'border border-gray-300 hover:bg-gray-50 text-gray-700'
-                            }`}
-                          >
-                            {pageNum}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <button
-                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                      disabled={currentPage === totalPages}
-                      className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 flex items-center gap-2"
-                    >
-                      Next
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+            </div>
           </div>
+        ))}
+      </div>
+
+      {/* Desktop Table View */}
+      <div className="hidden md:block">
+        <div className="w-full">
+          <div className="min-w-full divide-y divide-gray-200">
+            {/* Table Header */}
+            <div className="bg-gradient-to-r from-gray-50 to-gray-100">
+              <div className="grid grid-cols-12 gap-2 px-4 py-3">
+                <div className="col-span-3">
+                  <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Action</div>
+                </div>
+                {isAdmin && viewMode === 'all' && (
+                  <div className="col-span-2">
+                    <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">User</div>
+                  </div>
+                )}
+                <div className={isAdmin && viewMode === 'all' ? 'col-span-3' : 'col-span-4'}>
+                  <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Details</div>
+                </div>
+                <div className="col-span-1">
+                  <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Device</div>
+                </div>
+                <div className="col-span-1">
+                  <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">IP</div>
+                </div>
+                <div className="col-span-1">
+                  <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Timestamp</div>
+                </div>
+                <div className="col-span-1">
+                  <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Actions</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Table Body */}
+            <div className="divide-y divide-gray-100">
+              {logs.map((log) => (
+                <div key={log._id || Math.random()} className="hover:bg-gray-50 transition-colors duration-200">
+                  <div className="grid grid-cols-12 gap-2 px-4 py-3 items-center">
+                    {/* Action Column */}
+                    <div className="col-span-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-shrink-0">
+                          {getActionIcon(safeString(log.action))}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-medium text-gray-900 text-sm truncate" title={safeString(log.action)}>
+                            {safeString(log.action, 'Unknown Action')}
+                          </div>
+                          <div className="flex items-center gap-1 mt-1">
+                            <div className={`text-xs px-2 py-0.5 rounded-full ${getActionColor(safeString(log.action))}`}>
+                              {safeString(log.actionType, 'System')}
+                            </div>
+                            {getSeverityBadge(safeString(log.action))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* User Column (Admin only) */}
+                    {isAdmin && viewMode === 'all' && (
+                      <div className="col-span-2">
+                        {log.userId && typeof log.userId === 'object' ? (
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-gradient-to-r from-indigo-100 to-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
+                              <User className="text-indigo-600" size={14} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-medium text-gray-900 text-sm truncate">
+                                {safeString(log.userId.firstName)} {safeString(log.userId.lastName)}
+                              </div>
+                              <div className="text-xs text-gray-500 truncate">
+                                {safeString(log.userId.email)}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400 italic">System Action</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Details Column */}
+                    <div className={isAdmin && viewMode === 'all' ? 'col-span-3' : 'col-span-4'}>
+                      <div className="text-sm text-gray-900 truncate" title={safeString(log.details)}>
+                        {typeof log.details === 'object' 
+                          ? JSON.stringify(log.details).substring(0, 60) + '...'
+                          : safeString(log.details, 'No details').substring(0, 80)}
+                      </div>
+                      {log.additionalInfo && (
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          + Additional info
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Device Column */}
+                    <div className="col-span-1">
+                      <div className="flex items-center gap-1">
+                        {getDeviceIcon(safeString(log.device))}
+                        <span className="text-sm text-gray-700 truncate" title={safeString(log.device)}>
+                          {safeString(log.device, 'Unknown').substring(0, 10)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* IP Column */}
+                    <div className="col-span-1">
+                      <div className="flex items-center gap-1">
+                        <Wifi size={12} className="text-gray-400 flex-shrink-0" />
+                        <div className="font-mono text-xs text-gray-700 truncate" title={safeString(log.ip)}>
+                          {safeString(log.ip, 'N/A')}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Timestamp Column */}
+                    <div className="col-span-1">
+                      <div className="flex flex-col">
+                        <div className="text-xs font-medium text-gray-900 whitespace-nowrap">
+                          {new Date(safeString(log.createdAt)).toLocaleDateString([], {month: 'short', day: 'numeric'})}
+                        </div>
+                        <div className="text-xs text-gray-500 whitespace-nowrap">
+                          {new Date(safeString(log.createdAt)).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Actions Column */}
+                    <div className="col-span-1">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => viewLogDetails(log)}
+                          className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors duration-200"
+                          title="View Details"
+                        >
+                          <Eye size={16} />
+                        </button>
+                        {isAdmin && (
+                          <button
+                            onClick={() => deleteLog(log._id)}
+                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors duration-200"
+                            title="Delete Log"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => copyToClipboard(JSON.stringify(log, null, 2))}
+                          className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors duration-200"
+                          title="Copy Log Data"
+                        >
+                          <Copy size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )}
+
+  {/* Pagination Footer */}
+  {logs.length > 0 && (
+    <div className="p-4 md:p-6 border-t border-gray-100">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="text-sm text-gray-500 whitespace-nowrap">
+          Showing {((currentPage - 1) * 20) + 1} to {Math.min(currentPage * 20, totalLogs)} of {totalLogs} logs
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+            disabled={currentPage === 1}
+            className="px-3 py-1.5 md:px-4 md:py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 flex items-center gap-2 text-sm"
+          >
+            <ChevronRight className="rotate-180" size={14} />
+            Previous
+          </button>
+          <div className="flex gap-1">
+            {Array.from({ length: Math.min(3, totalPages) }, (_, i) => {
+              let pageNum;
+              if (totalPages <= 3) {
+                pageNum = i + 1;
+              } else if (currentPage <= 2) {
+                pageNum = i + 1;
+              } else if (currentPage >= totalPages - 1) {
+                pageNum = totalPages - 2 + i;
+              } else {
+                pageNum = currentPage - 1 + i;
+              }
+              
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => setCurrentPage(pageNum)}
+                  className={`w-8 h-8 md:w-10 md:h-10 rounded-lg transition-all duration-300 text-sm ${
+                    currentPage === pageNum
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : 'border border-gray-300 hover:bg-gray-50 text-gray-700'
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+            disabled={currentPage === totalPages}
+            className="px-3 py-1.5 md:px-4 md:py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 flex items-center gap-2 text-sm"
+          >
+            Next
+            <ChevronRight size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+</div>
         </div>
       </div>
 

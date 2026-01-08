@@ -1,29 +1,26 @@
-// app/sessions/page.js - Complete Backend Connected Version
+// app/sessions/page.js - সম্পূর্ণ আপডেটেড ভার্সন
 'use client';
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { 
-  Clock, Users, Calendar, BarChart3, Filter, Search, Download,
-  Eye, Trash2, User, LogOut, Smartphone, Activity,
+  Clock, Users, Filter, Search, Download,
+  Eye, Trash2, User, Smartphone, Activity,
   ChevronLeft, ChevronRight, Shield, AlertTriangle, CheckCircle,
-  XCircle, RefreshCw, TrendingUp, Settings, PieChart, Clock4,
-  Laptop, Timer, ShieldCheck, Edit2, Plus, X, HelpCircle,
-  ArrowUpRight, ArrowDownRight, CalendarDays, Target,
-  MoreVertical, DownloadCloud, FileText, Phone, Mail,
-  Home, Briefcase, MapPin, Globe, Cpu, Smartphone as PhoneIcon
+  XCircle, RefreshCw, Settings, PieChart,
+  Laptop, ShieldCheck, Edit2, Plus, X,
+  ArrowUpRight, ArrowDownRight,
+  MoreVertical, DownloadCloud, Phone, Mail,
+  LogIn, LogOut
 } from 'lucide-react';
 
-// API Configuration
+// API Configuration - তোমার backend URL অনুযায়ী সেট করো
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
-
-// Set up axios defaults
-axios.defaults.baseURL = API_BASE_URL;
 
 // Main Component
 export default function SessionsPage() {
-  const [activeView, setActiveView] = useState('dashboard');
+  const [activeView, setActiveView] = useState('sessions');
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState(false);
@@ -35,28 +32,6 @@ export default function SessionsPage() {
     attendanceRate: '0%',
     totalHours: '0h',
     daysClockedIn: 0
-  });
-  
-  // New statistics for different periods
-  const [periodStats, setPeriodStats] = useState({
-    'Last 7 days': {
-      totalSessions: 0,
-      totalDurationHours: '0',
-      totalHoursWorked: '0',
-      daysClockedIn: 0,
-      daysClockedOut: 0,
-      avgHoursPerDay: '0',
-      attendanceRate: '0%'
-    },
-    'Last 30 days': {
-      totalSessions: 0,
-      totalDurationHours: '0',
-      totalHoursWorked: '0',
-      daysClockedIn: 0,
-      daysClockedOut: 0,
-      avgHoursPerDay: '0',
-      attendanceRate: '0%'
-    }
   });
   
   const [currentSession, setCurrentSession] = useState(null);
@@ -74,11 +49,9 @@ export default function SessionsPage() {
     total: 0,
     pages: 0
   });
-  const [analyticsData, setAnalyticsData] = useState({
-    dailyActivity: [],
-    deviceDistribution: [],
-    sessionTrends: []
-  });
+  
+  const [clockingIn, setClockingIn] = useState(false);
+  const [clockingOut, setClockingOut] = useState(false);
   
   const router = useRouter();
 
@@ -105,6 +78,15 @@ export default function SessionsPage() {
     return null;
   };
 
+  // Set axios defaults with token
+  const setupAxios = () => {
+    const token = getCurrentToken();
+    if (token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    }
+    axios.defaults.baseURL = API_BASE_URL;
+  };
+
   // Verify token and fetch user data
   const verifyAndFetchUser = async () => {
     try {
@@ -118,7 +100,7 @@ export default function SessionsPage() {
         throw new Error('No authentication token found');
       }
 
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      setupAxios();
       
       let userResponse;
       try {
@@ -128,10 +110,11 @@ export default function SessionsPage() {
           userResponse = await axios.get('/users/getProfile');
         }
       } catch (error) {
-        console.log('Trying alternative profile endpoint...');
+        console.error('Profile fetch error:', error);
+        throw new Error('Failed to fetch user profile');
       }
 
-      if (userResponse.data) {
+      if (userResponse?.data) {
         const userData = userResponse.data.user || userResponse.data.data || userResponse.data;
         
         if (!userData) {
@@ -164,12 +147,10 @@ export default function SessionsPage() {
       console.error('Authentication error:', error);
       setAuthError(true);
       
-      if (getUserType() === 'admin') {
-        localStorage.removeItem('adminToken');
-      } else {
-        localStorage.removeItem('employeeToken');
-        localStorage.removeItem('userToken');
-      }
+      // Clear local storage
+      localStorage.removeItem('adminToken');
+      localStorage.removeItem('employeeToken');
+      localStorage.removeItem('userToken');
       localStorage.removeItem('userData');
       
       setTimeout(() => {
@@ -184,61 +165,47 @@ export default function SessionsPage() {
   const fetchInitialData = async (userType) => {
     try {
       if (userType === 'admin') {
-        await fetchAdminSessions();
-        await fetchAdminStats();
-        await fetchAnalyticsData();
+        await Promise.all([
+          fetchAdminSessions(),
+          fetchAdminStats()
+        ]);
       } else {
-        await fetchMySessions();
-        await fetchMyStats();
-        await fetchMyCurrentSession();
-        await fetchPeriodStats();
+        await Promise.all([
+          fetchMySessions(),
+          fetchMyStats(),
+          fetchMyCurrentSession()
+        ]);
       }
     } catch (error) {
       console.error('Error fetching initial data:', error);
     }
   };
 
-  // Fetch employee sessions with attendance data
-  const fetchMySessions = async (page = 1) => {
-    try {
-      const response = await axios.get(`/my-sessions?page=${page}&limit=${pagination.limit}`);
-      
-      if (response.data && response.data.success) {
-        const sessionsData = response.data.data || [];
-        setSessions(sessionsData);
-        
-        // Update pagination from backend response
-        if (response.data.pagination) {
-          setPagination(response.data.pagination);
-        }
-        
-        console.log('Fetched sessions:', sessionsData.length);
-      }
-    } catch (error) {
-      console.error('Error fetching my sessions:', error);
-      setSessions([]);
-    }
-  };
-
-  // Fetch admin sessions
+  // ✅ আপডেটেড: Fetch admin sessions - তোমার backend এর রাউট অনুযায়ী
   const fetchAdminSessions = async (page = 1) => {
     try {
-      const query = new URLSearchParams({
-        page: page,
+      const params = {
+        page,
         limit: pagination.limit,
-        ...Object.entries(filters)
-          .filter(([_, value]) => value)
-          .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {})
-      });
+        ...(filters.userId?.trim() && { userId: filters.userId }),
+        ...(filters.status?.trim() && { status: filters.status }),
+        ...(filters.startDate?.trim() && { startDate: filters.startDate }),
+        ...(filters.endDate?.trim() && { endDate: filters.endDate }),
+        ...(filters.searchQuery?.trim() && { search: filters.searchQuery }),
+      };
 
-      const response = await axios.get(`/admin/allSession?${query}`);
-      
-      if (response.data && response.data.success) {
-        setSessions(response.data.data || []);
-        
+      // তোমার backend রাউট: router.get('/allSession', ...)
+      const response = await axios.get('/allSession', { params });
+
+      if (response.data?.success) {
+        const sessionsData = response.data.data || [];
+        setSessions(sessionsData);
+
         if (response.data.pagination) {
           setPagination(response.data.pagination);
         }
+      } else {
+        setSessions([]);
       }
     } catch (error) {
       console.error('Error fetching admin sessions:', error);
@@ -246,62 +213,39 @@ export default function SessionsPage() {
     }
   };
 
-  // Fetch employee stats with attendance
-  const fetchMyStats = async () => {
+  // ✅ আপডেটেড: Fetch my sessions - তোমার backend রাউট অনুযায়ী
+  const fetchMySessions = async () => {
     try {
-      const response = await axios.get('/sessions/stats/attendance');
+      // তোমার backend রাউট: router.get('/sessions/my-sessions', ...)
+      const response = await axios.get('/sessions/my-sessions');
       
-      if (response.data && response.data.success) {
-        const data = response.data.data || {};
+      if (response.data && (response.data.status === 'success' || response.data.success)) {
+        const sessionsData = response.data.data || [];
+        setSessions(sessionsData);
         
-        // Update main stats
-        setStats(prev => ({
-          ...prev,
-          totalSessions: data.totalSessions || 0,
-          totalHours: data.totalHoursWorked ? `${data.totalHoursWorked}h` : '0h',
-          daysClockedIn: data.daysClockedIn || 0,
-          attendanceRate: data.attendanceRate || '0%',
-          avgDuration: data.totalDurationHours ? `${data.totalDurationHours}h` : '0h'
-        }));
+        if (response.data.pagination) {
+          setPagination(prev => ({
+            ...prev,
+            total: response.data.pagination.total || sessionsData.length,
+            pages: response.data.pagination.pages || 1
+          }));
+        }
+      } else {
+        setSessions([]);
       }
     } catch (error) {
-      console.error('Error fetching my stats:', error);
+      console.error("Failed to fetch sessions:", error);
+      setSessions([]);
     }
   };
 
-  // Fetch period stats (7 days, 30 days)
-  const fetchPeriodStats = async () => {
-    try {
-      const response = await axios.get('/sessions/stats');
-      
-      if (response.data && response.data.success) {
-        setPeriodStats(response.data.data || {});
-      }
-    } catch (error) {
-      console.error('Error fetching period stats:', error);
-    }
-  };
-
-  // Fetch current active session
-  const fetchMyCurrentSession = async () => {
-    try {
-      const response = await axios.get('/my-current-session');
-      
-      if (response.data && response.data.success) {
-        setCurrentSession(response.data.data);
-      }
-    } catch (error) {
-      console.error('Error fetching current session:', error);
-      setCurrentSession(null);
-    }
-  };
-
-  // Fetch admin stats
+  // ✅ আপডেটেড: Fetch admin stats
   const fetchAdminStats = async () => {
     try {
+      // তোমার backend রাউট: router.get('/admin/statistics', ...)
       const response = await axios.get('/admin/statistics');
       
-      if (response.data && response.data.success) {
+      if (response.data && (response.data.status === 'success' || response.data.success)) {
         const data = response.data.data || {};
         setStats(prev => ({
           ...prev,
@@ -316,94 +260,108 @@ export default function SessionsPage() {
     }
   };
 
-  // Fetch analytics data for admin
-  const fetchAnalyticsData = async () => {
+  // ✅ আপডেটেড: Fetch my stats
+  const fetchMyStats = async () => {
     try {
-      // Fetch daily activity
-      const activityResponse = await axios.get('/sessions/analytics/daily');
-      // Fetch device distribution
-      const deviceResponse = await axios.get('/sessions/analytics/devices');
-      // Fetch session trends
-      const trendsResponse = await axios.get('/sessions/analytics/trends');
+      // তোমার backend রাউট: router.get('/sessions/stats/attendance', ...)
+      const response = await axios.get('/sessions/sessions/stats/attendance');
       
-      setAnalyticsData({
-        dailyActivity: activityResponse.data?.data || [],
-        deviceDistribution: deviceResponse.data?.data || [],
-        sessionTrends: trendsResponse.data?.data || []
-      });
-    } catch (error) {
-      console.error('Error fetching analytics:', error);
-    }
-  };
-
-  // Handle clock in/out
-  const handleClockAction = async () => {
-    try {
-      if (currentSession?.isActive) {
-        // Clock out
-        await axios.post('/sessions/clock-out');
-        alert('Clocked out successfully!');
-      } else {
-        // Clock in
-        await axios.post('/sessions/clock-in');
-        alert('Clocked in successfully!');
+      if (response.data && (response.data.status === 'success' || response.data.success)) {
+        const data = response.data.data || {};
+        
+        setStats(prev => ({
+          ...prev,
+          totalSessions: data.totalSessions || 0,
+          totalHours: data.totalHoursWorked ? `${data.totalHoursWorked}h` : '0h',
+          daysClockedIn: data.daysClockedIn || 0,
+          attendanceRate: data.attendanceRate || '0%',
+          avgDuration: data.totalDurationHours ? `${data.totalDurationHours}h` : '0h'
+        }));
       }
-      
-      // Refresh data
-      await fetchMyCurrentSession();
-      await fetchMySessions(pagination.page);
-      await fetchMyStats();
-      await fetchPeriodStats();
     } catch (error) {
-      console.error('Clock action error:', error);
-      alert(error.response?.data?.message || 'Failed to perform clock action');
+      console.error('Error fetching my stats:', error);
     }
   };
 
-  // Handle session delete
+  // ✅ আপডেটেড: Fetch my current session
+  const fetchMyCurrentSession = async () => {
+    try {
+      // তোমার backend রাউট: router.get('/my-current-session', ...)
+      const response = await axios.get('/sessions/my-current-session');
+      
+      if (response.data && (response.data.status === 'success' || response.data.success)) {
+        setCurrentSession(response.data.data);
+      } else {
+        setCurrentSession(null);
+      }
+    } catch (error) {
+      console.error('Error fetching current session:', error);
+      setCurrentSession(null);
+    }
+  };
+
+  // ✅ NEW: Clock In function
+  const handleClockIn = async () => {
+    try {
+      setClockingIn(true);
+      // তোমার backend রাউট: router.post('/clock-in', ...)
+      const response = await axios.post('/sessions/clock-in');
+      
+      if (response.data?.success) {
+        alert('Successfully clocked in!');
+        await fetchMyCurrentSession();
+        await fetchMySessions();
+      } else {
+        alert(response.data?.message || 'Failed to clock in');
+      }
+    } catch (error) {
+      console.error('Clock in error:', error);
+      alert(error.response?.data?.message || 'Failed to clock in');
+    } finally {
+      setClockingIn(false);
+    }
+  };
+
+  // ✅ NEW: Clock Out function
+  const handleClockOut = async () => {
+    try {
+      setClockingOut(true);
+      // তোমার backend রাউট: router.post('/clock-out', ...)
+      const response = await axios.post('/sessions/clock-out');
+      
+      if (response.data?.success) {
+        alert('Successfully clocked out!');
+        await fetchMyCurrentSession();
+        await fetchMySessions();
+      } else {
+        alert(response.data?.message || 'Failed to clock out');
+      }
+    } catch (error) {
+      console.error('Clock out error:', error);
+      alert(error.response?.data?.message || 'Failed to clock out');
+    } finally {
+      setClockingOut(false);
+    }
+  };
+
+  // ✅ NEW: Delete session (admin only)
   const handleDeleteSession = async (sessionId) => {
     if (!confirm('Are you sure you want to delete this session?')) return;
     
     try {
-      const isAdmin = getUserType() === 'admin';
-      const endpoint = isAdmin ? `/admin/session/${sessionId}` : `/sessions/${sessionId}`;
+      // তোমার backend রাউট: router.delete('/admin/session/:id', ...)
+      const response = await axios.delete(`/sessions/admin/session/${sessionId}`);
       
-      await axios.delete(endpoint);
-      
-      // Refresh data
-      if (isAdmin) {
+      if (response.data?.success) {
+        alert('Session deleted successfully!');
         await fetchAdminSessions(pagination.page);
       } else {
-        await fetchMySessions(pagination.page);
+        alert('Failed to delete session');
       }
-      
-      alert('Session deleted successfully!');
     } catch (error) {
-      console.error('Delete error:', error);
+      console.error('Delete session error:', error);
       alert('Failed to delete session');
     }
-  };
-
-  // Handle logout
-  const handleLogout = async () => {
-    try {
-      // Call logout API if available
-      await axios.post('/users/logout');
-    } catch (error) {
-      console.log('Logout API error:', error);
-    }
-    
-    const userType = getUserType();
-    
-    if (userType === 'admin') {
-      localStorage.removeItem('adminToken');
-    } else {
-      localStorage.removeItem('employeeToken');
-      localStorage.removeItem('userToken');
-    }
-    
-    localStorage.removeItem('userData');
-    router.push('/login');
   };
 
   // Handle refresh
@@ -414,12 +372,10 @@ export default function SessionsPage() {
     if (userType === 'admin') {
       promises.push(fetchAdminSessions(pagination.page));
       promises.push(fetchAdminStats());
-      promises.push(fetchAnalyticsData());
     } else {
-      promises.push(fetchMySessions(pagination.page));
+      promises.push(fetchMySessions());
       promises.push(fetchMyStats());
       promises.push(fetchMyCurrentSession());
-      promises.push(fetchPeriodStats());
     }
     
     await Promise.all(promises);
@@ -429,7 +385,9 @@ export default function SessionsPage() {
   const handleExport = async () => {
     try {
       const userType = getUserType();
-      const endpoint = userType === 'admin' ? '/sessions/admin/export' : '/sessions/export';
+      const endpoint = userType === 'admin' 
+        ? '/sessions/admin/export' 
+        : '/sessions/export';
       
       const response = await axios.get(endpoint, {
         responseType: 'blob',
@@ -463,8 +421,9 @@ export default function SessionsPage() {
       
       return () => clearTimeout(timeoutId);
     }
-  }, [filters]);
+  }, [filters.searchQuery, filters.status, filters.startDate, filters.endDate]);
 
+  // Loading state
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
@@ -476,6 +435,7 @@ export default function SessionsPage() {
     );
   }
 
+  // Auth error state
   if (authError || !userData) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
@@ -552,14 +512,7 @@ export default function SessionsPage() {
                     {userData?.name}
                   </p>
                   <p className="text-xs text-gray-500 capitalize">{userData?.role}</p>
-                </div>
-                <button
-                  onClick={handleLogout}
-                  className="px-3 py-1 text-sm bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-1"
-                >
-                  <LogOut className="w-4 h-4" />
-                  <span className="hidden sm:inline">Logout</span>
-                </button>
+                </div> 
               </div>
             </div>
           </div>
@@ -567,13 +520,7 @@ export default function SessionsPage() {
 
         {/* Navigation Tabs */}
         <div className="px-4 sm:px-6 border-t border-gray-200">
-          <div className="flex space-x-1 overflow-x-auto py-1">
-            <NavTab
-              icon={<BarChart3 className="w-4 h-4" />}
-              label="Dashboard"
-              active={activeView === 'dashboard'}
-              onClick={() => setActiveView('dashboard')}
-            />
+          <div className="flex space-x-1 overflow-x-auto py-1"> 
             <NavTab
               icon={<Clock className="w-4 h-4" />}
               label="Sessions"
@@ -606,20 +553,8 @@ export default function SessionsPage() {
         </div>
       </header>
 
-      <main className="p-4 sm:p-6">
-        {activeView === 'dashboard' && (
-          <DashboardView 
-            isAdmin={isAdmin} 
-            stats={stats}
-            periodStats={periodStats}
-            userData={userData}
-            sessions={sessions}
-            currentSession={currentSession}
-            onClockAction={handleClockAction}
-            onRefresh={handleRefresh}
-          />
-        )}
-
+      <main className="p-4 sm:p-6"> 
+        {/* শুধু Sessions ভিউ */}
         {activeView === 'sessions' && (
           <SessionsView 
             isAdmin={isAdmin}
@@ -632,16 +567,20 @@ export default function SessionsPage() {
             fetchAdminSessions={fetchAdminSessions}
             fetchMySessions={fetchMySessions}
             userData={userData}
+            currentSession={currentSession}
+            onClockIn={handleClockIn}
+            onClockOut={handleClockOut}
             onDeleteSession={handleDeleteSession}
             onExport={handleExport}
             onRefresh={handleRefresh}
+            clockingIn={clockingIn}
+            clockingOut={clockingOut}
           />
         )}
 
         {isAdmin && activeView === 'analytics' && (
           <AnalyticsView 
             stats={stats}
-            analyticsData={analyticsData}
             sessions={sessions}
           />
         )}
@@ -691,266 +630,7 @@ const NavTab = ({ icon, label, active, onClick }) => (
   </button>
 );
 
-// Dashboard View Component with Backend Data
-const DashboardView = ({ 
-  isAdmin, 
-  stats, 
-  periodStats,
-  userData, 
-  sessions, 
-  currentSession,
-  onClockAction,
-  onRefresh 
-}) => {
-  const recentSessions = sessions.slice(0, 5);
-  
-  // Calculate additional metrics
-  const totalHours = parseFloat(stats.totalHours) || 0;
-  const avgDailyHours = periodStats['Last 30 days']?.avgHoursPerDay || '0';
-  const attendanceRate = parseFloat(stats.attendanceRate) || 0;
-
-  return (
-    <div className="space-y-6">
-      {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-2xl p-6 text-white">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-xl sm:text-2xl font-bold">Welcome back, {userData?.name}!</h2>
-            <p className="text-blue-100 mt-2 text-sm sm:text-base">
-              {isAdmin 
-                ? `You're managing ${stats.totalSessions} sessions across the system`
-                : `You've worked ${totalHours} hours this month with ${attendanceRate}% attendance`
-              }
-            </p>
-          </div>
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={onRefresh}
-              className="p-2 bg-white/20 rounded-lg hover:bg-white/30 transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw className="w-5 h-5" />
-            </button>
-            <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-              <ShieldCheck className="w-6 h-6 sm:w-8 sm:h-8" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Stats Grid with Backend Data */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="Total Sessions"
-          value={stats.totalSessions}
-          icon={<Clock className="w-5 h-5" />}
-          color="blue"
-          trend={{ value: '+12%', positive: true }}
-        />
-        <StatCard
-          title="Total Hours"
-          value={stats.totalHours}
-          icon={<Timer className="w-5 h-5" />}
-          color="green"
-          subtitle={`Avg ${avgDailyHours}h/day`}
-        />
-        <StatCard
-          title="Attendance Rate"
-          value={stats.attendanceRate}
-          icon={<TrendingUp className="w-5 h-5" />}
-          color="purple"
-          trend={{ value: attendanceRate > 85 ? '+5%' : '-2%', positive: attendanceRate > 85 }}
-        />
-        <StatCard
-          title="Days Clocked In"
-          value={stats.daysClockedIn}
-          icon={<CalendarDays className="w-5 h-5" />}
-          color="orange"
-          subtitle="This month"
-        />
-      </div>
-
-      {/* Current Session and Quick Actions */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Current Session & Quick Stats */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Current Session Card */}
-          {!isAdmin && (
-            <div className={`rounded-2xl p-6 ${
-              currentSession?.isActive 
-                ? 'bg-gradient-to-r from-green-50 to-green-100 border border-green-200'
-                : 'bg-gradient-to-r from-blue-50 to-blue-100 border border-blue-200'
-            }`}>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-lg sm:text-xl font-bold text-gray-900">
-                    {currentSession?.isActive ? 'Current Session Active' : 'No Active Session'}
-                  </h3>
-                  {currentSession?.isActive ? (
-                    <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-4">
-                      <div>
-                        <p className="text-sm text-gray-600">Clock In</p>
-                        <p className="text-base sm:text-lg font-semibold">
-                          {currentSession.formattedClockIn || 'N/A'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-600">Duration</p>
-                        <p className="text-base sm:text-lg font-semibold">
-                          {currentSession.formattedDuration || '0m'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-600">Status</p>
-                        <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
-                          <Activity className="w-3 h-3 mr-1" />
-                          Active
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-gray-600 mt-2">You're currently not clocked in</p>
-                  )}
-                </div>
-                <button
-                  onClick={onClockAction}
-                  className={`px-4 py-2 rounded-lg flex items-center gap-2 self-start sm:self-auto ${
-                    currentSession?.isActive
-                      ? 'bg-red-600 hover:bg-red-700 text-white'
-                      : 'bg-blue-600 hover:bg-blue-700 text-white'
-                  }`}
-                >
-                  <Clock4 className="w-4 h-4" />
-                  {currentSession?.isActive ? 'Clock Out' : 'Clock In'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Period Stats */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Performance Overview</h3>
-            <div className="space-y-4">
-              {Object.entries(periodStats).map(([period, data]) => (
-                <div key={period} className="border-b border-gray-100 pb-4 last:border-0">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="font-medium text-gray-700">{period}</span>
-                    <span className="text-sm text-gray-500">
-                      {data.totalSessions} sessions
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <div>
-                      <p className="text-xs text-gray-500">Hours Worked</p>
-                      <p className="font-semibold">{data.totalHoursWorked}h</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500">Days Clocked In</p>
-                      <p className="font-semibold">{data.daysClockedIn}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500">Avg/Day</p>
-                      <p className="font-semibold">{data.avgHoursPerDay}h</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500">Attendance</p>
-                      <p className="font-semibold">{data.attendanceRate}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Quick Actions & Recent */}
-        <div className="space-y-6">
-          {/* Quick Actions */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-6">Quick Actions</h3>
-            <div className="space-y-3">
-              {!isAdmin && (
-                <QuickActionButton
-                  icon={<Clock4 className="w-5 h-5" />}
-                  label={currentSession?.isActive ? "Clock Out" : "Clock In"}
-                  onClick={onClockAction}
-                  color={currentSession?.isActive ? "red" : "blue"}
-                />
-              )}
-              <QuickActionButton
-                icon={<Download className="w-5 h-5" />}
-                label="Export Report"
-                onClick={() => alert('Export coming soon')}
-                color="green"
-              />
-              <QuickActionButton
-                icon={<Settings className="w-5 h-5" />}
-                label="Settings"
-                onClick={() => alert('Settings')}
-                color="purple"
-              />
-              <QuickActionButton
-                icon={<HelpCircle className="w-5 h-5" />}
-                label="Help & Support"
-                onClick={() => alert('Help')}
-                color="gray"
-              />
-            </div>
-          </div>
-
-          {/* Recent Sessions */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold text-gray-900">Recent Sessions</h3>
-              <span className="text-sm text-gray-500">{recentSessions.length} of {sessions.length}</span>
-            </div>
-            
-            <div className="space-y-4">
-              {recentSessions.length > 0 ? (
-                recentSessions.map((session, index) => (
-                  <div key={session.id || index} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      <div className={`p-2 rounded-lg ${
-                        session.status === 'active' ? 'bg-green-100' : 'bg-gray-100'
-                      }`}>
-                        {session.status === 'active' ? (
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                        ) : (
-                          <XCircle className="w-4 h-4 text-gray-600" />
-                        )}
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900 text-sm">
-                          {new Date(session.loginAt || session.createdAt).toLocaleDateString()}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          {session.formattedClockIn || 'No clock-in'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-medium text-gray-900 text-sm">{session.formattedDuration || '0m'}</p>
-                      <p className="text-xs text-gray-500 truncate max-w-[100px]">
-                        {session.device || 'Unknown'}
-                      </p>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center py-8 text-gray-500">
-                  <Clock className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                  <p>No sessions found</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Sessions View Component with Backend Data
+// Sessions View Component
 const SessionsView = ({ 
   isAdmin, 
   sessions, 
@@ -962,13 +642,19 @@ const SessionsView = ({
   fetchAdminSessions,
   fetchMySessions,
   userData,
+  currentSession,
+  onClockIn,
+  onClockOut,
   onDeleteSession,
   onExport,
-  onRefresh 
+  onRefresh,
+  clockingIn,
+  clockingOut
 }) => {
   const [selectedSession, setSelectedSession] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
 
+  // Tabs definition
   const tabs = isAdmin 
     ? [
         { id: 'all', label: 'All Sessions', count: pagination.total },
@@ -976,9 +662,9 @@ const SessionsView = ({
         { id: 'completed', label: 'Completed', count: sessions.filter(s => s.status === 'completed' || s.isClockedOut).length },
       ]
     : [
-        { id: 'my-sessions', label: 'My Sessions', count: pagination.total },
+        { id: 'my-sessions', label: 'My Sessions', count: sessions.length },
         { id: 'active', label: 'Active', count: sessions.filter(s => s.isActive).length },
-        { id: 'clocked-in', label: 'Clocked In', count: sessions.filter(s => s.isClockedIn).length },
+        { id: 'completed', label: 'Completed', count: sessions.filter(s => s.isClockedOut || s.status === 'completed').length },
       ];
 
   const handleSessionClick = (session) => {
@@ -987,16 +673,32 @@ const SessionsView = ({
   };
 
   const filteredSessions = sessions.filter(session => {
-    if (activeTab === 'all') return true;
+    if (activeTab === 'all' || activeTab === 'my-sessions') return true;
     if (activeTab === 'active') return session.isActive || session.status === 'active';
     if (activeTab === 'completed') return session.isClockedOut || session.status === 'completed';
-    if (activeTab === 'clocked-in') return session.isClockedIn;
     return true;
   });
 
+  const updateFilter = (key, value) => {
+    setFilters(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      userId: '',
+      status: '',
+      startDate: '',
+      endDate: '',
+      searchQuery: ''
+    });
+  };
+
   return (
     <div className="space-y-6">
-      {/* Header with Filters */}
+      {/* Header with Quick Actions */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
@@ -1010,6 +712,31 @@ const SessionsView = ({
           </div>
           
           <div className="flex flex-wrap items-center gap-3">
+            {/* Clock In/Out buttons for employees */}
+            {!isAdmin && (
+              <div className="flex gap-3">
+                {currentSession?.isClockedIn ? (
+                  <button
+                    onClick={onClockOut}
+                    disabled={clockingOut}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 text-sm sm:text-base disabled:opacity-50"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    {clockingOut ? 'Processing...' : 'Clock Out'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={onClockIn}
+                    disabled={clockingIn}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 text-sm sm:text-base disabled:opacity-50"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    {clockingIn ? 'Processing...' : 'Clock In'}
+                  </button>
+                )}
+              </div>
+            )}
+            
             <button
               onClick={onRefresh}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 text-sm sm:text-base"
@@ -1017,6 +744,7 @@ const SessionsView = ({
               <RefreshCw className="w-4 h-4" />
               Refresh
             </button>
+            
             <button
               onClick={onExport}
               className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm sm:text-base"
@@ -1024,17 +752,41 @@ const SessionsView = ({
               <DownloadCloud className="w-4 h-4" />
               Export
             </button>
-            {!isAdmin && (
-              <button
-                onClick={() => alert('Coming soon')}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 text-sm sm:text-base"
-              >
-                <FileText className="w-4 h-4" />
-                Generate Report
-              </button>
-            )}
           </div>
         </div>
+
+        {/* Current Session Status (for employees) */}
+        {!isAdmin && currentSession && (
+          <div className="mt-6 bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Activity className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900">Current Session Status</h3>
+                  <p className="text-sm text-gray-600">
+                    {currentSession.isClockedIn ? (
+                      <>
+                        Clocked in at {currentSession.formattedClockIn || '--:--'} • 
+                        Duration: {currentSession.formattedDuration || '0m'}
+                      </>
+                    ) : (
+                      'No active session'
+                    )}
+                  </p>
+                </div>
+              </div>
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                currentSession.isClockedIn 
+                  ? 'bg-green-100 text-green-800' 
+                  : 'bg-gray-100 text-gray-800'
+              }`}>
+                {currentSession.isClockedIn ? 'Working' : 'Not Clocked In'}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Filters - Admin Only */}
         {isAdmin && (
@@ -1044,12 +796,12 @@ const SessionsView = ({
               placeholder="Search by user..."
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
               value={filters.searchQuery}
-              onChange={(e) => setFilters({...filters, searchQuery: e.target.value})}
+              onChange={(e) => updateFilter('searchQuery', e.target.value)}
             />
             <select
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
               value={filters.status}
-              onChange={(e) => setFilters({...filters, status: e.target.value})}
+              onChange={(e) => updateFilter('status', e.target.value)}
             >
               <option value="">All Status</option>
               <option value="active">Active</option>
@@ -1061,22 +813,16 @@ const SessionsView = ({
               type="date"
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
               value={filters.startDate}
-              onChange={(e) => setFilters({...filters, startDate: e.target.value})}
+              onChange={(e) => updateFilter('startDate', e.target.value)}
             />
             <input
               type="date"
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
               value={filters.endDate}
-              onChange={(e) => setFilters({...filters, endDate: e.target.value})}
+              onChange={(e) => updateFilter('endDate', e.target.value)}
             />
             <button
-              onClick={() => setFilters({
-                userId: '',
-                status: '',
-                startDate: '',
-                endDate: '',
-                searchQuery: ''
-              })}
+              onClick={clearFilters}
               className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm"
             >
               Clear Filters
@@ -1110,233 +856,333 @@ const SessionsView = ({
       </div>
 
       {/* Sessions Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                {isAdmin && (
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    User
-                  </th>
-                )}
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Date & Time
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Clock In/Out
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Duration
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Device
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {filteredSessions.length > 0 ? (
-                filteredSessions.map((session, index) => (
-                  <tr key={session.id || session._id || index} className="hover:bg-gray-50">
+<div className="bg-white rounded-2xl shadow-lg border border-gray-200">
+  {/* Header with Summary */}
+  <div className="p-6 border-b border-gray-100">
+    <div className="flex items-center justify-between">
+      <div>
+        <h2 className="text-2xl font-bold text-gray-900">Session History</h2>
+        <div className="flex items-center gap-4 mt-2">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span className="text-sm text-gray-600">
+              <span className="font-semibold text-gray-900">
+                {sessions.filter(s => s.isActive).length}
+              </span> Active
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+            <span className="text-sm text-gray-600">
+              <span className="font-semibold text-gray-900">
+                {sessions.filter(s => s.isClockedIn).length}
+              </span> Clocked In
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+            <span className="text-sm text-gray-600">
+              <span className="font-semibold text-gray-900">
+                {sessions.filter(s => s.isClockedOut).length}
+              </span> Completed
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="relative">
+          <Clock className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search sessions..."
+            className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64"
+            value={filters.searchQuery}
+            onChange={(e) => updateFilter('searchQuery', e.target.value)}
+          />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {/* Session Cards - Grid Layout */}
+  <div className="p-6">
+    {filteredSessions.length > 0 ? (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {filteredSessions.map((session, index) => (
+          <div 
+            key={session.id || session._id || index}
+            className="group relative bg-white border border-gray-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all duration-300 overflow-hidden"
+          >
+            {/* Status Indicator Bar */}
+            <div className={`absolute top-0 left-0 w-1 h-full ${
+              session.isActive 
+                ? 'bg-green-500' 
+                : session.isClockedIn 
+                ? 'bg-blue-500' 
+                : 'bg-gray-400'
+            }`}></div>
+
+            <div className="pl-5 pr-6 py-5">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-3">
                     {isAdmin && (
-                      <td className="px-6 py-4">
-                        <div className="flex items-center">
-                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
-                            <User className="w-4 h-4 text-blue-600" />
-                          </div>
-                          <div>
-                            <p className="font-medium text-gray-900 text-sm">
-                              {session.userName || session.userEmail?.split('@')[0] || 'Unknown'}
-                            </p>
-                            <p className="text-xs text-gray-500 truncate max-w-[150px]">
-                              {session.userEmail || 'No email'}
-                            </p>
-                          </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-gradient-to-br from-blue-100 to-blue-50 rounded-full flex items-center justify-center">
+                          <User className="w-4 h-4 text-blue-600" />
                         </div>
-                      </td>
+                        <div>
+                          <p className="font-medium text-gray-900 text-sm">
+                            {session.userName || 'Unknown User'}
+                          </p>
+                          <p className="text-xs text-gray-500 truncate max-w-[150px]">
+                            {session.userEmail || 'No email'}
+                          </p>
+                        </div>
+                      </div>
                     )}
-                    <td className="px-6 py-4">
-                      <p className="text-gray-900 text-sm">
-                        {new Date(session.loginAt || session.createdAt).toLocaleDateString()}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {new Date(session.loginAt || session.createdAt).toLocaleTimeString([], { 
-                          hour: '2-digit', 
-                          minute: '2-digit' 
+                    <div className="ml-auto">
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                        session.isActive
+                          ? 'bg-green-100 text-green-800'
+                          : session.isClockedIn
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-gray-100 text-gray-800'
+                      }`}>
+                        {session.isActive ? 'Active' : 
+                         session.isClockedIn ? 'Clocked In' : 'Completed'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Session Date & Time */}
+                  <div className="mb-4">
+                    <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
+                      <Clock className="w-4 h-4" />
+                      <span className="font-medium">Session Date</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="bg-gray-50 rounded-lg px-3 py-2">
+                        <p className="text-sm font-semibold text-gray-900">
+                          {new Date(session.loginAt || session.createdAt).toLocaleDateString('en-US', {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric'
+                          })}
+                        </p>
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {new Date(session.loginAt || session.createdAt).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit'
                         })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Clock In/Out Times */}
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="bg-green-50 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
+                          <Clock className="w-3 h-3 text-green-600" />
+                        </div>
+                        <p className="text-xs font-medium text-gray-700">Clock In</p>
+                      </div>
+                      <p className="text-lg font-bold text-gray-900">
+                        {session.formattedClockIn || '--:--'}
                       </p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="space-y-1">
-                        <div className="flex items-center text-xs">
-                          <Clock className="w-3 h-3 mr-1 text-green-600" />
-                          <span className="text-gray-700">{session.formattedClockIn || '--:--'}</span>
+                    </div>
+                    <div className="bg-red-50 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="w-6 h-6 bg-red-100 rounded-full flex items-center justify-center">
+                          <Clock className="w-3 h-3 text-red-600" />
                         </div>
-                        <div className="flex items-center text-xs">
-                          <LogOut className="w-3 h-3 mr-1 text-red-600" />
-                          <span className="text-gray-700">{session.formattedClockOut || '--:--'}</span>
+                        <p className="text-xs font-medium text-gray-700">Clock Out</p>
+                      </div>
+                      <p className="text-lg font-bold text-gray-900">
+                        {session.formattedClockOut || '--:--'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Duration & Device Info */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1">Duration</p>
+                      <div className="flex items-center gap-2">
+                        <div className="px-3 py-1.5 bg-blue-50 rounded-lg">
+                          <p className="text-sm font-bold text-blue-700">
+                            {session.formattedDuration || '0m'}
+                          </p>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                        <Timer className="w-3 h-3 mr-1" />
-                        {session.formattedDuration || '0m'}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center">
-                        {session.device?.toLowerCase().includes('mobile') ? (
-                          <Smartphone className="w-4 h-4 mr-2 text-gray-500" />
-                        ) : (
-                          <Laptop className="w-4 h-4 mr-2 text-gray-500" />
+                        {session.formattedTotalHours && (
+                          <span className="text-xs text-gray-500">
+                            ({session.formattedTotalHours})
+                          </span>
                         )}
-                        <span className="text-gray-700 text-sm truncate max-w-[100px]">
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-gray-500 mb-1">Device</p>
+                      <div className="flex items-center gap-2">
+                        {session.device?.toLowerCase().includes('mobile') ? (
+                          <Smartphone className="w-4 h-4 text-gray-500" />
+                        ) : (
+                          <Laptop className="w-4 h-4 text-gray-500" />
+                        )}
+                        <span className="text-sm text-gray-700 truncate max-w-[120px]">
                           {session.device || 'Unknown'}
                         </span>
                       </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col gap-1">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          session.isActive
-                            ? 'bg-green-100 text-green-800'
-                            : session.isClockedIn
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}>
-                          {session.isActive ? (
-                            <>
-                              <Activity className="w-3 h-3 mr-1" />
-                              Active
-                            </>
-                          ) : session.isClockedIn ? (
-                            <>
-                              <CheckCircle className="w-3 h-3 mr-1" />
-                              Clocked In
-                            </>
-                          ) : (
-                            <>
-                              <XCircle className="w-3 h-3 mr-1" />
-                              Completed
-                            </>
-                          )}
-                        </span>
-                        {session.isClockedIn && !session.isClockedOut && (
-                          <span className="text-xs text-gray-500">Working...</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => handleSessionClick(session)}
-                          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-                          title="View Details"
-                        >
-                          <Eye className="w-4 h-4 text-gray-600" />
-                        </button>
-                        {isAdmin && (
-                          <button
-                            onClick={() => onDeleteSession(session.id || session._id)}
-                            className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4 text-red-600" />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => alert('More options')}
-                          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-                          title="More"
-                        >
-                          <MoreVertical className="w-4 h-4 text-gray-600" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={isAdmin ? 7 : 6} className="px-6 py-12 text-center">
-                    <div className="text-gray-500">
-                      <Clock className="w-16 h-16 mx-auto mb-3 opacity-50" />
-                      <p className="text-lg font-medium mb-2">No sessions found</p>
-                      <p className="text-sm text-gray-400">
-                        {activeTab !== 'all' 
-                          ? `No ${activeTab} sessions available`
-                          : 'No sessions match your criteria'
-                        }
-                      </p>
                     </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination */}
-        {filteredSessions.length > 0 && pagination.total > pagination.limit && (
-          <div className="px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-sm text-gray-700">
-              Showing {((pagination.page - 1) * pagination.limit) + 1} to{' '}
-              {Math.min(pagination.page * pagination.limit, pagination.total)} of{' '}
-              {pagination.total} sessions
-            </div>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => isAdmin ? fetchAdminSessions(pagination.page - 1) : fetchMySessions(pagination.page - 1)}
-                disabled={pagination.page === 1}
-                className="px-3 py-2 border border-gray-300 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <div className="flex items-center space-x-1">
-                {Array.from({ length: Math.min(5, pagination.pages) }, (_, i) => {
-                  let pageNum;
-                  if (pagination.pages <= 5) {
-                    pageNum = i + 1;
-                  } else if (pagination.page <= 3) {
-                    pageNum = i + 1;
-                  } else if (pagination.page >= pagination.pages - 2) {
-                    pageNum = pagination.pages - 4 + i;
-                  } else {
-                    pageNum = pagination.page - 2 + i;
-                  }
-                  
-                  return (
-                    <button
-                      key={pageNum}
-                      onClick={() => isAdmin ? fetchAdminSessions(pageNum) : fetchMySessions(pageNum)}
-                      className={`px-3 py-1 text-sm rounded-lg ${
-                        pagination.page === pageNum
-                          ? 'bg-blue-600 text-white'
-                          : 'text-gray-700 hover:bg-gray-100'
-                      }`}
-                    >
-                      {pageNum}
-                    </button>
-                  );
-                })}
+                  </div>
+                </div>
               </div>
-              <button
-                onClick={() => isAdmin ? fetchAdminSessions(pagination.page + 1) : fetchMySessions(pagination.page + 1)}
-                disabled={pagination.page === pagination.pages}
-                className="px-3 py-2 border border-gray-300 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+
+              {/* Actions Bar */}
+              <div className="flex items-center justify-between pt-4 border-t border-gray-100">
+                <div className="flex items-center gap-2">
+                  {session.ip && (
+                    <span className="text-xs text-gray-500">
+                      IP: {session.ip}
+                    </span>
+                  )}
+                  {session.autoLogout && (
+                    <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                      Auto logout
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleSessionClick(session)}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                    title="View Details"
+                  >
+                    <Eye className="w-4 h-4 text-gray-600" />
+                  </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => onDeleteSession(session.id || session._id)}
+                      className="p-2 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-500" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => alert('More options')}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                    title="More"
+                  >
+                    <MoreVertical className="w-4 h-4 text-gray-600" />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-        )}
+        ))}
       </div>
+    ) : (
+      <div className="text-center py-16">
+        <div className="max-w-md mx-auto">
+          <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Clock className="w-12 h-12 text-gray-400" />
+          </div>
+          <h3 className="text-xl font-semibold text-gray-900 mb-3">
+            No sessions found
+          </h3>
+          <p className="text-gray-600 mb-8">
+            {activeTab !== 'all' && activeTab !== 'my-sessions'
+              ? `There are no ${activeTab} sessions available`
+              : 'No sessions match your current filters. Try adjusting your search or filters.'
+            }
+          </p>
+          <div className="flex gap-3 justify-center">
+            <button
+              onClick={() => {
+                clearFilters();
+                onRefresh();
+              }}
+              className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            >
+              Clear Filters
+            </button>
+            <button
+              onClick={onRefresh}
+              className="px-5 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+            >
+              Refresh Data
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+
+  {/* Pagination */}
+  {filteredSessions.length > 0 && pagination.total > pagination.limit && (
+    <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="text-sm text-gray-700">
+          <span className="font-medium">
+            Showing {(pagination.page - 1) * pagination.limit + 1} to{' '}
+            {Math.min(pagination.page * pagination.limit, pagination.total)} of{' '}
+            {pagination.total} sessions
+          </span>
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => isAdmin ? fetchAdminSessions(pagination.page - 1) : fetchMySessions()}
+            disabled={pagination.page === 1}
+            className="p-2 rounded-lg border border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          
+          <div className="flex items-center gap-1">
+            {Array.from({ length: Math.min(5, pagination.pages) }, (_, i) => {
+              let pageNum;
+              if (pagination.pages <= 5) {
+                pageNum = i + 1;
+              } else if (pagination.page <= 3) {
+                pageNum = i + 1;
+              } else if (pagination.page >= pagination.pages - 2) {
+                pageNum = pagination.pages - 4 + i;
+              } else {
+                pageNum = pagination.page - 2 + i;
+              }
+              
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => isAdmin ? fetchAdminSessions(pageNum) : fetchMySessions()}
+                  className={`w-9 h-9 rounded-lg text-sm font-medium transition-all ${
+                    pagination.page === pageNum
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-gray-700 hover:bg-white border border-gray-200'
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+          </div>
+          
+          <button
+            onClick={() => isAdmin ? fetchAdminSessions(pagination.page + 1) : fetchMySessions()}
+            disabled={pagination.page === pagination.pages}
+            className="p-2 rounded-lg border border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white transition-colors"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div> 
+      </div>
+    </div>
+  )}
+</div>
 
       {/* Session Details Modal */}
       {showDetails && selectedSession && (
@@ -1350,739 +1196,39 @@ const SessionsView = ({
   );
 };
 
-// Analytics View Component with Backend Data
-const AnalyticsView = ({ stats, analyticsData, sessions }) => {
-  const [timeRange, setTimeRange] = useState('7d');
-  
-  // Calculate analytics from sessions data
-  const deviceDistribution = sessions.reduce((acc, session) => {
-    const device = session.device?.toLowerCase() || 'unknown';
-    if (device.includes('mobile')) {
-      acc.mobile = (acc.mobile || 0) + 1;
-    } else if (device.includes('desktop') || device.includes('windows') || device.includes('mac')) {
-      acc.desktop = (acc.desktop || 0) + 1;
-    } else {
-      acc.other = (acc.other || 0) + 1;
-    }
-    return acc;
-  }, { mobile: 0, desktop: 0, other: 0 });
-
-  const dailyActivity = sessions.reduce((acc, session) => {
-    const date = new Date(session.loginAt || session.createdAt).toLocaleDateString();
-    acc[date] = (acc[date] || 0) + 1;
-    return acc;
-  }, {});
-
-  const sessionTrends = Object.entries(dailyActivity)
-    .slice(-7)
-    .map(([date, count]) => ({ date, count }));
-
+// Analytics View Component (Admin Only)
+const AnalyticsView = ({ stats, sessions }) => {
   return (
-    <div className="space-y-6">
-      {/* Analytics Header */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900">Analytics Dashboard</h2>
-            <p className="text-gray-600 mt-1">Real-time insights and performance metrics</p>
-          </div>
-          <div className="flex items-center space-x-2">
-            <select
-              value={timeRange}
-              onChange={(e) => setTimeRange(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm"
-            >
-              <option value="7d">Last 7 days</option>
-              <option value="30d">Last 30 days</option>
-              <option value="90d">Last 90 days</option>
-            </select>
-          </div>
-        </div>
-        
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-blue-600 font-medium">Total Sessions</p>
-                <p className="text-3xl font-bold text-gray-900 mt-2">{stats.totalSessions}</p>
-              </div>
-              <TrendingUp className="w-8 h-8 text-blue-500" />
-            </div>
-            <div className="mt-4 flex items-center text-sm">
-              <ArrowUpRight className="w-4 h-4 text-green-500 mr-1" />
-              <span className="text-green-600 font-medium">+12%</span>
-              <span className="text-gray-500 ml-2">from last week</span>
-            </div>
-          </div>
-          
-          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-green-600 font-medium">Active Users</p>
-                <p className="text-3xl font-bold text-gray-900 mt-2">{stats.activeSessions}</p>
-              </div>
-              <Users className="w-8 h-8 text-green-500" />
-            </div>
-            <div className="mt-4 flex items-center text-sm">
-              <ArrowUpRight className="w-4 h-4 text-green-500 mr-1" />
-              <span className="text-green-600 font-medium">+8%</span>
-              <span className="text-gray-500 ml-2">from yesterday</span>
-            </div>
-          </div>
-          
-          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-purple-600 font-medium">Avg. Duration</p>
-                <p className="text-3xl font-bold text-gray-900 mt-2">{stats.avgDuration}</p>
-              </div>
-              <Clock className="w-8 h-8 text-purple-500" />
-            </div>
-            <div className="mt-4 flex items-center text-sm">
-              <ArrowDownRight className="w-4 h-4 text-red-500 mr-1" />
-              <span className="text-red-600 font-medium">-3%</span>
-              <span className="text-gray-500 ml-2">from last week</span>
-            </div>
-          </div>
-          
-          <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-orange-600 font-medium">Attendance Rate</p>
-                <p className="text-3xl font-bold text-gray-900 mt-2">{stats.attendanceRate}</p>
-              </div>
-              <Target className="w-8 h-8 text-orange-500" />
-            </div>
-            <div className="mt-4 flex items-center text-sm">
-              <ArrowUpRight className="w-4 h-4 text-green-500 mr-1" />
-              <span className="text-green-600 font-medium">+5%</span>
-              <span className="text-gray-500 ml-2">from last month</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Charts and Graphs */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Device Distribution */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Device Distribution</h3>
-          <div className="space-y-4">
-            {Object.entries(deviceDistribution).map(([device, count]) => {
-              const total = Object.values(deviceDistribution).reduce((a, b) => a + b, 1);
-              const percentage = Math.round((count / total) * 100);
-              
-              return (
-                <div key={device} className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="font-medium text-gray-700 capitalize">{device}</span>
-                    <span className="text-gray-500">{count} sessions ({percentage}%)</span>
-                  </div>
-                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full rounded-full ${
-                        device === 'mobile' ? 'bg-blue-500' :
-                        device === 'desktop' ? 'bg-green-500' : 'bg-purple-500'
-                      }`}
-                      style={{ width: `${percentage}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Session Trends */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Session Trends (Last 7 days)</h3>
-          <div className="h-64 flex items-end space-x-2">
-            {sessionTrends.map((trend, index) => {
-              const maxCount = Math.max(...sessionTrends.map(t => t.count));
-              const height = maxCount > 0 ? (trend.count / maxCount) * 100 : 0;
-              
-              return (
-                <div key={index} className="flex-1 flex flex-col items-center">
-                  <div 
-                    className="w-full bg-gradient-to-t from-blue-500 to-blue-300 rounded-t-lg"
-                    style={{ height: `${height}%`, minHeight: '10px' }}
-                  />
-                  <span className="text-xs text-gray-500 mt-2">
-                    {new Date(trend.date).toLocaleDateString('en-US', { weekday: 'short' })}
-                  </span>
-                  <span className="text-sm font-semibold mt-1">{trend.count}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <h2 className="text-2xl font-bold text-gray-900 mb-6">Analytics Dashboard</h2>
+      <p className="text-gray-600 mb-8">Analytics features coming soon...</p>
     </div>
   );
 };
 
-// Users View Component
+// Users View Component (Admin Only)
 const UsersView = ({ userData }) => {
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
-
-  useEffect(() => {
-    fetchUsers();
-  }, []);
-
-  const fetchUsers = async () => {
-    try {
-      setLoading(true);
-      const response = await axios.get('/users/all');
-      
-      if (response.data && response.data.success) {
-        setUsers(response.data.data || []);
-      }
-    } catch (error) {
-      console.error('Error fetching users:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const filteredUsers = users.filter(user => {
-    const matchesSearch = user.firstName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         user.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         user.email?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesRole = roleFilter === 'all' || user.role === roleFilter;
-    return matchesSearch && matchesRole;
-  });
-
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">User Management</h2>
-          <p className="text-gray-600 mt-1">Manage all system users and their permissions</p>
-        </div>
-        <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 self-start">
-          <Plus className="w-4 h-4" />
-          Add User
-        </button>
-      </div>
-      
-      {/* Filters */}
-      <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <input
-          type="text"
-          placeholder="Search users..."
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-        <select
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-          value={roleFilter}
-          onChange={(e) => setRoleFilter(e.target.value)}
-        >
-          <option value="all">All Roles</option>
-          <option value="admin">Admin</option>
-          <option value="employee">Employee</option>
-          <option value="manager">Manager</option>
-        </select>
-        <button
-          onClick={fetchUsers}
-          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm flex items-center justify-center gap-2"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
-      </div>
-      
-      {loading ? (
-        <div className="text-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="text-gray-600 mt-4">Loading users...</p>
-        </div>
-      ) : filteredUsers.length > 0 ? (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Contact</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {filteredUsers.map((user) => (
-                <tr key={user._id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center">
-                      {user.profileImage ? (
-                        <img 
-                          src={user.profileImage} 
-                          alt={`${user.firstName} ${user.lastName}`}
-                          className="w-10 h-10 rounded-full object-cover mr-3"
-                        />
-                      ) : (
-                        <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mr-3">
-                          <User className="w-5 h-5 text-blue-600" />
-                        </div>
-                      )}
-                      <div>
-                        <span className="font-medium text-gray-900 block">
-                          {user.firstName} {user.lastName}
-                        </span>
-                        <span className="text-sm text-gray-500">
-                          {user.department || 'No department'}
-                        </span>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center text-sm">
-                        <Mail className="w-3 h-3 mr-2 text-gray-400" />
-                        <span className="text-gray-700">{user.email}</span>
-                      </div>
-                      {user.phone && (
-                        <div className="flex items-center text-sm">
-                          <Phone className="w-3 h-3 mr-2 text-gray-400" />
-                          <span className="text-gray-700">{user.phone}</span>
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                      user.role === 'admin' 
-                        ? 'bg-purple-100 text-purple-800'
-                        : user.role === 'manager'
-                        ? 'bg-blue-100 text-blue-800'
-                        : 'bg-green-100 text-green-800'
-                    }`}>
-                      {user.role || 'employee'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                      user.status === 'active'
-                        ? 'bg-green-100 text-green-800'
-                        : user.status === 'inactive'
-                        ? 'bg-red-100 text-red-800'
-                        : 'bg-gray-100 text-gray-800'
-                    }`}>
-                      {user.status || 'active'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center space-x-2">
-                      <button 
-                        className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-                        title="Edit"
-                        onClick={() => alert(`Edit ${user.firstName}`)}
-                      >
-                        <Edit2 className="w-4 h-4 text-gray-600" />
-                      </button>
-                      <button 
-                        className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Delete"
-                        onClick={() => {
-                          if (confirm(`Are you sure you want to delete ${user.firstName}?`)) {
-                            alert('User deleted');
-                          }
-                        }}
-                      >
-                        <Trash2 className="w-4 h-4 text-red-600" />
-                      </button>
-                      <button 
-                        className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-                        title="More"
-                      >
-                        <MoreVertical className="w-4 h-4 text-gray-600" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="text-center py-12 text-gray-500">
-          <Users className="w-16 h-16 mx-auto mb-4 opacity-50" />
-          <p className="text-lg font-medium mb-2">No users found</p>
-          <p className="text-sm text-gray-400">
-            {searchTerm || roleFilter !== 'all' 
-              ? 'Try changing your search criteria'
-              : 'Add new users to get started'
-            }
-          </p>
-        </div>
-      )}
+      <h2 className="text-2xl font-bold text-gray-900 mb-6">User Management</h2>
+      <p className="text-gray-600 mb-8">User management features coming soon...</p>
     </div>
   );
 };
 
 // Settings View Component
 const SettingsView = ({ userData, isAdmin }) => {
-  const [settings, setSettings] = useState({
-    notifications: true,
-    emailUpdates: true,
-    autoLogout: true,
-    autoLogoutHours: 8,
-    theme: 'light',
-    language: 'en',
-    timezone: 'UTC'
-  });
-
-  const [profileData, setProfileData] = useState({
-    firstName: userData.firstName || '',
-    lastName: userData.lastName || '',
-    email: userData.email || '',
-    phone: userData.phone || '',
-    department: userData.department || '',
-    designation: userData.designation || '',
-    address: userData.address || ''
-  });
-
-  const handleSaveSettings = async () => {
-    try {
-      // Save preferences
-      await axios.put('/users/preferences', settings);
-      
-      // Save profile if changed
-      await axios.put('/users/profile', profileData);
-      
-      alert('Settings saved successfully!');
-    } catch (error) {
-      console.error('Save settings error:', error);
-      alert('Failed to save settings');
-    }
-  };
-
-  const handleResetPassword = async () => {
-    const newPassword = prompt('Enter new password:');
-    if (newPassword && newPassword.length >= 6) {
-      try {
-        await axios.post('/users/reset-password', { newPassword });
-        alert('Password reset successfully!');
-      } catch (error) {
-        alert('Failed to reset password');
-      }
-    } else {
-      alert('Password must be at least 6 characters');
-    }
-  };
-
   return (
     <div className="max-w-4xl mx-auto">
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-6">Settings</h2>
-        
-        <div className="space-y-8">
-          {/* Profile Information */}
-          <div className="border-b border-gray-200 pb-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Profile Information</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">First Name</label>
-                <input
-                  type="text"
-                  value={profileData.firstName}
-                  onChange={(e) => setProfileData({...profileData, firstName: e.target.value})}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Last Name</label>
-                <input
-                  type="text"
-                  value={profileData.lastName}
-                  onChange={(e) => setProfileData({...profileData, lastName: e.target.value})}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-                <input
-                  type="email"
-                  value={profileData.email}
-                  onChange={(e) => setProfileData({...profileData, email: e.target.value})}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50"
-                  readOnly
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Phone</label>
-                <input
-                  type="tel"
-                  value={profileData.phone}
-                  onChange={(e) => setProfileData({...profileData, phone: e.target.value})}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="+1234567890"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Department</label>
-                <input
-                  type="text"
-                  value={profileData.department}
-                  onChange={(e) => setProfileData({...profileData, department: e.target.value})}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Designation</label>
-                <input
-                  type="text"
-                  value={profileData.designation}
-                  onChange={(e) => setProfileData({...profileData, designation: e.target.value})}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Address</label>
-                <textarea
-                  value={profileData.address}
-                  onChange={(e) => setProfileData({...profileData, address: e.target.value})}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  rows="3"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Preferences */}
-          <div className="border-b border-gray-200 pb-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Preferences</h3>
-            <div className="space-y-4">
-              <label className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
-                <div>
-                  <p className="font-medium text-gray-700">Enable notifications</p>
-                  <p className="text-sm text-gray-500">Receive notifications for important updates</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={settings.notifications}
-                  onChange={(e) => setSettings({...settings, notifications: e.target.checked})}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-5 w-5"
-                />
-              </label>
-              
-              <label className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
-                <div>
-                  <p className="font-medium text-gray-700">Email updates</p>
-                  <p className="text-sm text-gray-500">Receive weekly reports via email</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={settings.emailUpdates}
-                  onChange={(e) => setSettings({...settings, emailUpdates: e.target.checked})}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-5 w-5"
-                />
-              </label>
-              
-              <label className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
-                <div>
-                  <p className="font-medium text-gray-700">Auto logout</p>
-                  <p className="text-sm text-gray-500">Automatically logout after inactivity</p>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="checkbox"
-                    checked={settings.autoLogout}
-                    onChange={(e) => setSettings({...settings, autoLogout: e.target.checked})}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-5 w-5"
-                  />
-                  {settings.autoLogout && (
-                    <select
-                      value={settings.autoLogoutHours}
-                      onChange={(e) => setSettings({...settings, autoLogoutHours: parseInt(e.target.value)})}
-                      className="px-3 py-1 border border-gray-300 rounded-lg text-sm"
-                    >
-                      <option value="4">4 hours</option>
-                      <option value="8">8 hours</option>
-                      <option value="12">12 hours</option>
-                      <option value="24">24 hours</option>
-                    </select>
-                  )}
-                </div>
-              </label>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Theme</label>
-                  <select
-                    value={settings.theme}
-                    onChange={(e) => setSettings({...settings, theme: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="light">Light</option>
-                    <option value="dark">Dark</option>
-                    <option value="auto">Auto (System)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Language</label>
-                  <select
-                    value={settings.language}
-                    onChange={(e) => setSettings({...settings, language: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="en">English</option>
-                    <option value="bn">Bangla</option>
-                    <option value="es">Spanish</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Security */}
-          <div className="border-b border-gray-200 pb-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Security</h3>
-            <div className="space-y-4">
-              <button
-                onClick={handleResetPassword}
-                className="w-full flex items-center justify-between p-4 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                <div>
-                  <p className="font-medium text-gray-700">Reset Password</p>
-                  <p className="text-sm text-gray-500">Change your account password</p>
-                </div>
-                <ArrowUpRight className="w-5 h-5 text-gray-400" />
-              </button>
-              
-              {isAdmin && (
-                <button
-                  onClick={() => alert('Two-factor authentication setup')}
-                  className="w-full flex items-center justify-between p-4 border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
-                  <div>
-                    <p className="font-medium text-gray-700">Two-Factor Authentication</p>
-                    <p className="text-sm text-gray-500">Add an extra layer of security</p>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm text-red-600">Disabled</span>
-                    <ArrowUpRight className="w-5 h-5 text-gray-400" />
-                  </div>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-sm text-gray-500">
-              User ID: {userData._id?.substring(0, 12)}...
-            </div>
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={() => {
-                  setProfileData({
-                    firstName: userData.firstName || '',
-                    lastName: userData.lastName || '',
-                    email: userData.email || '',
-                    phone: userData.phone || '',
-                    department: userData.department || '',
-                    designation: userData.designation || '',
-                    address: userData.address || ''
-                  });
-                }}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-              >
-                Reset Changes
-              </button>
-              <button
-                onClick={handleSaveSettings}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                Save Changes
-              </button>
-            </div>
-          </div>
-        </div>
+        <p className="text-gray-600 mb-8">Settings features coming soon...</p>
       </div>
     </div>
   );
 };
 
-// Helper Components
-const StatCard = ({ title, value, icon, color, trend, subtitle }) => {
-  const colorClasses = {
-    blue: 'from-blue-50 to-blue-100 text-blue-600',
-    green: 'from-green-50 to-green-100 text-green-600',
-    purple: 'from-purple-50 to-purple-100 text-purple-600',
-    orange: 'from-orange-50 to-orange-100 text-orange-600'
-  };
-
-  const bgColorClasses = {
-    blue: 'bg-blue-100',
-    green: 'bg-green-100',
-    purple: 'bg-purple-100',
-    orange: 'bg-orange-100'
-  };
-
-  return (
-    <div className={`bg-gradient-to-br ${colorClasses[color]} rounded-xl p-4 sm:p-6`}>
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium">{title}</p>
-          <p className="text-2xl sm:text-3xl font-bold text-gray-900 mt-2">{value}</p>
-          {subtitle && (
-            <p className="text-xs text-gray-600 mt-1">{subtitle}</p>
-          )}
-        </div>
-        <div className={`p-2 sm:p-3 ${bgColorClasses[color]} rounded-lg`}>
-          {icon}
-        </div>
-      </div>
-      {trend && (
-        <div className="mt-4 flex items-center text-sm">
-          {trend.positive ? (
-            <ArrowUpRight className="w-4 h-4 text-green-500 mr-1" />
-          ) : (
-            <ArrowDownRight className="w-4 h-4 text-red-500 mr-1" />
-          )}
-          <span className={trend.positive ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
-            {trend.value}
-          </span>
-          <span className="text-gray-500 ml-2">this week</span>
-        </div>
-      )}
-    </div>
-  );
-};
-
-const QuickActionButton = ({ icon, label, onClick, color = 'blue' }) => {
-  const colorClasses = {
-    blue: 'hover:bg-blue-50 text-blue-700',
-    green: 'hover:bg-green-50 text-green-700',
-    red: 'hover:bg-red-50 text-red-700',
-    purple: 'hover:bg-purple-50 text-purple-700',
-    gray: 'hover:bg-gray-50 text-gray-700'
-  };
-
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center gap-3 p-3 text-left rounded-lg transition-colors ${colorClasses[color]}`}
-    >
-      <div className={`p-2 rounded-lg ${
-        color === 'blue' ? 'bg-blue-100' :
-        color === 'green' ? 'bg-green-100' :
-        color === 'red' ? 'bg-red-100' :
-        color === 'purple' ? 'bg-purple-100' : 'bg-gray-100'
-      }`}>
-        {icon}
-      </div>
-      <span className="font-medium">{label}</span>
-    </button>
-  );
-};
-
+// Session Details Modal Component
 const SessionDetailsModal = ({ session, isAdmin, onClose }) => {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -2130,12 +1276,6 @@ const SessionDetailsModal = ({ session, isAdmin, onClose }) => {
                       <p className="font-medium capitalize">{session.userRole}</p>
                     </div>
                   )}
-                  {session.userDepartment && (
-                    <div>
-                      <p className="text-sm text-gray-500">Department</p>
-                      <p className="font-medium">{session.userDepartment}</p>
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -2156,10 +1296,8 @@ const SessionDetailsModal = ({ session, isAdmin, onClose }) => {
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">Logout Time</p>
-                  <p className="font-medium">
-                    {session.logoutAt ? new Date(session.logoutAt).toLocaleString() : 'Still active'}
-                  </p>
+                  <p className="text-sm text-gray-500">Duration</p>
+                  <p className="font-medium">{session.formattedDuration || '0m'}</p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">Clock In</p>
@@ -2170,8 +1308,8 @@ const SessionDetailsModal = ({ session, isAdmin, onClose }) => {
                   <p className="font-medium">{session.formattedClockOut || '--:--'}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">Duration</p>
-                  <p className="font-medium">{session.formattedDuration || '0m'}</p>
+                  <p className="text-sm text-gray-500">Total Hours</p>
+                  <p className="font-medium">{session.formattedTotalHours || '0 hours'}</p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">Status</p>
@@ -2190,68 +1328,43 @@ const SessionDetailsModal = ({ session, isAdmin, onClose }) => {
             </div>
 
             {/* Device Information */}
-            <div className="bg-purple-50 rounded-xl p-6">
+            <div className="bg-gray-50 rounded-xl p-6 lg:col-span-2">
               <h4 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                <Smartphone className="w-5 h-5" />
+                <Laptop className="w-5 h-5" />
                 Device Information
               </h4>
-              <div className="grid grid-cols-2 gap-4">
-                {session.device && (
-                  <div>
-                    <p className="text-sm text-gray-500">Device</p>
-                    <p className="font-medium">{session.device}</p>
-                  </div>
-                )}
-                {session.browser && (
-                  <div>
-                    <p className="text-sm text-gray-500">Browser</p>
-                    <p className="font-medium">{session.browser}</p>
-                  </div>
-                )}
-                {session.os && (
-                  <div>
-                    <p className="text-sm text-gray-500">Operating System</p>
-                    <p className="font-medium">{session.os}</p>
-                  </div>
-                )}
-                {session.ip && (
-                  <div>
-                    <p className="text-sm text-gray-500">IP Address</p>
-                    <p className="font-medium">{session.ip}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Activities */}
-            {session.activities && session.activities.length > 0 && (
-              <div className="bg-orange-50 rounded-xl p-6">
-                <h4 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <Activity className="w-5 h-5" />
-                  Activities ({session.activities.length})
-                </h4>
-                <div className="space-y-2 max-h-40 overflow-y-auto">
-                  {session.activities.slice(0, 5).map((activity, index) => (
-                    <div key={index} className="flex items-center justify-between p-2 bg-white/50 rounded">
-                      <span className="text-sm">{activity.action}</span>
-                      <span className="text-xs text-gray-500">
-                        {new Date(activity.timestamp).toLocaleTimeString([], { 
-                          hour: '2-digit', 
-                          minute: '2-digit' 
-                        })}
-                      </span>
-                    </div>
-                  ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-sm text-gray-500">Device</p>
+                  <p className="font-medium">{session.device || 'Unknown'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Browser</p>
+                  <p className="font-medium">{session.browser || 'Unknown'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">OS</p>
+                  <p className="font-medium">{session.os || 'Unknown'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">IP Address</p>
+                  <p className="font-medium">{session.ip || 'Unknown'}</p>
                 </div>
               </div>
-            )}
+            </div>
           </div>
 
           {/* Actions */}
           <div className="flex justify-end space-x-3 pt-6 mt-6 border-t border-gray-200">
             <button
               onClick={onClose}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onClose}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
               Close
             </button>

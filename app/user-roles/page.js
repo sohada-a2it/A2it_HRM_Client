@@ -1,12 +1,17 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import axios from "axios"; // ✅ এই line টা যোগ করো
 import { EyeOff, Key, Eye } from 'lucide-react';
 import { 
   createUser as createUserAPI, 
   getUsers, 
   updateUser as updateUserAPI,
-  deleteUser as deleteUserAPI 
+  deleteUser as deleteUserAPI,
+  uploadProfilePicture,
+  removeProfilePicture,
+  adminRequestOtp as adminRequestOtpAPI,
+  adminResetPassword as adminResetPasswordAPI
 } from "@/app/lib/api";
 import { 
   Plus, 
@@ -33,11 +38,20 @@ import {
   Users,
   X,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Image,
+  Camera,
+  Upload,
+  Loader2,
+  Lock,
+  ChevronLeft,
+  ChevronRight,
+  ArrowLeft,
+  ArrowRight
 } from "lucide-react";
 import { Toaster, toast } from "react-hot-toast";
 
-export default function UsersPage() {
+export default function page() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
@@ -46,7 +60,34 @@ export default function UsersPage() {
   const [currentUserId, setCurrentUserId] = useState(null);
   const [selectedRole, setSelectedRole] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
-  const [showFilters, setShowFilters] = useState(false);
+  const [uploadingProfile, setUploadingProfile] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [profilePreview, setProfilePreview] = useState(null);
+  const [removingProfile, setRemovingProfile] = useState(false);
+  const fileInputRef = useRef(null); 
+  const [adminEmail, setAdminEmail] = useState(''); 
+
+// useEffect-এর মধ্যে admin email সেট করুন
+useEffect(() => {
+  const envAdminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
+  console.log('📧 Setting admin email:', envAdminEmail);
+  setAdminEmail(envAdminEmail);
+}, []);
+// API Configuration setup
+const setupAxios = () => {
+  const token = localStorage.getItem('adminToken') || localStorage.getItem('userToken');
+  if (token) {
+    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  }
+  axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+};
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+  
+  // Reset Password Page state
+  const [showResetPasswordPage, setShowResetPasswordPage] = useState(false);
+  const [selectedUserForReset, setSelectedUserForReset] = useState(null);
   
   const [form, setForm] = useState({
     firstName: "",
@@ -58,20 +99,20 @@ export default function UsersPage() {
     status: "active",
     department: "IT",
     phone: "",
-    joiningDate: new Date().toISOString().split('T')[0]
+    joiningDate: new Date().toISOString().split('T')[0],
+    profilePicture: null
   });
 
   const [showPassword, setShowPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [isResetPasswordMode, setIsResetPasswordMode] = useState(false);
   const [resetStep, setResetStep] = useState(1);
   const [resetData, setResetData] = useState({
-    email: '',
+    adminEmail: '',
     otp: '',
     newPassword: '',
     confirmPassword: ''
   });
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
 
   // Fetch users from backend
   const fetchUsers = async () => {
@@ -79,9 +120,13 @@ export default function UsersPage() {
     const loadingToast = toast.loading("Loading users...");
     try {
       const data = await getUsers();
-      setUsers(data.users || []);
+      const usersWithPictures = data.users?.map(user => ({
+        ...user,
+        profilePicture: user.profilePicture || user.picture || null
+      })) || [];
+      setUsers(usersWithPictures);
       toast.dismiss(loadingToast);
-      toast.success(`Loaded ${data.users?.length || 0} users successfully!`, {
+      toast.success(`Loaded ${usersWithPictures.length} users successfully!`, {
         icon: '👥',
         duration: 3000,
         style: {
@@ -103,10 +148,138 @@ export default function UsersPage() {
 
   useEffect(() => {
     fetchUsers();
-  }, []);
+  }, []); 
+const handleChange = (e) => {
+  const { name, value } = e.target;
+  setForm(prev => ({
+    ...prev,
+    [name]: value
+  }));
+  
+  // Debug log
+  if (name === 'password') {
+    console.log('Password changed:', value.length, 'characters');
+  }
+};
 
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+  // Password field-এর জন্য আলাদা onChange হ্যান্ডলার
+  const handlePasswordChange = (e) => {
+    setForm({ ...form, password: e.target.value });
+  };
+
+  const handleFileSelect = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      toast.error('Please upload a valid image file (JPEG, PNG, GIF, WebP)');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File size should be less than 5MB');
+      return;
+    }
+
+    setSelectedFile(file);
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setProfilePreview(e.target.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const triggerFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Handle profile picture upload for existing user
+  const handleProfilePictureUpload = async () => {
+    if (!selectedFile) {
+      toast.error('Please select a file first');
+      return;
+    }
+
+    if (!currentUserId) {
+      toast.error('Please save the user first before uploading profile picture');
+      return;
+    }
+
+    setUploadingProfile(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('profilePicture', selectedFile);
+
+      const result = await uploadProfilePicture(currentUserId, formData);
+      
+      if (result.success) {
+        setForm(prev => ({
+          ...prev,
+          profilePicture: result.pictureUrl || result.data?.pictureUrl
+        }));
+        
+        setUsers(prevUsers => 
+          prevUsers.map(user => 
+            user._id === currentUserId 
+              ? { ...user, profilePicture: result.pictureUrl || result.data?.pictureUrl }
+              : user
+          )
+        );
+        
+        toast.success('Profile picture uploaded successfully!');
+        setSelectedFile(null);
+        setProfilePreview(null);
+      } else {
+        toast.error(result.message || 'Failed to upload profile picture');
+      }
+    } catch (error) {
+      toast.error('Failed to upload profile picture');
+      console.error('Upload error:', error);
+    } finally {
+      setUploadingProfile(false);
+    }
+  };
+
+  // Handle profile picture removal
+  const handleRemoveProfilePicture = async () => {
+    if (!currentUserId) return;
+
+    if (!confirm('Are you sure you want to remove the profile picture?')) return;
+
+    setRemovingProfile(true);
+
+    try {
+      const result = await removeProfilePicture(currentUserId);
+      
+      if (result.success) {
+        setForm(prev => ({
+          ...prev,
+          profilePicture: null
+        }));
+        
+        setUsers(prevUsers => 
+          prevUsers.map(user => 
+            user._id === currentUserId 
+              ? { ...user, profilePicture: null }
+              : user
+          )
+        );
+        
+        toast.success('Profile picture removed successfully!');
+      } else {
+        toast.error(result.message || 'Failed to remove profile picture');
+      }
+    } catch (error) {
+      toast.error('Failed to remove profile picture');
+      console.error('Remove error:', error);
+    } finally {
+      setRemovingProfile(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -130,15 +303,15 @@ export default function UsersPage() {
         status: form.status,
         department: form.department,
         phone: form.phone,
-        joiningDate: new Date().toISOString().split('T')[0]
+        joiningDate: new Date().toISOString().split('T')[0],
+        profilePicture: form.profilePicture
       };
 
       let res;
       
       if (isEditMode) {
-        // Update existing user
         res = await updateUserAPI(currentUserId, payload);
-        if (res.message === "User updated successfully") {
+        if (res.message === "User updated successfully" || res.success) {
           toast.dismiss(loadingToast);
           toast.success("User updated successfully!", {
             icon: '✅',
@@ -150,9 +323,8 @@ export default function UsersPage() {
           });
         }
       } else {
-        // Create new user
         res = await createUserAPI(payload);
-        if (res.message === "User created successfully") {
+        if (res.message === "User created successfully" || res.success) {
           toast.dismiss(loadingToast);
           toast.success("User created successfully!", {
             icon: '🎉',
@@ -162,12 +334,20 @@ export default function UsersPage() {
               color: '#fff',
             }
           });
+          if (res.user?._id) {
+            setCurrentUserId(res.user._id);
+            setIsEditMode(true);
+          }
         }
       }
 
-      if (res.message?.includes("successfully")) {
-        resetForm();
+      if (res.message?.includes("successfully") || res.success) {
         fetchUsers();
+        
+        if (selectedFile && (currentUserId || res.user?._id)) {
+          const userId = currentUserId || res.user._id;
+          await handleProfilePictureUploadForUser(userId);
+        }
       } else {
         toast.dismiss(loadingToast);
         toast.error(res.message || "Something went wrong!", {
@@ -186,6 +366,39 @@ export default function UsersPage() {
     setFormLoading(false);
   };
 
+  // Separate function for profile picture upload after user creation
+  const handleProfilePictureUploadForUser = async (userId) => {
+    if (!selectedFile) return;
+
+    setUploadingProfile(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('profilePicture', selectedFile);
+
+      const result = await uploadProfilePicture(userId, formData);
+      
+      if (result.success) {
+        setForm(prev => ({
+          ...prev,
+          profilePicture: result.pictureUrl || result.data?.pictureUrl
+        }));
+        
+        toast.success('Profile picture uploaded successfully!');
+        setSelectedFile(null);
+        setProfilePreview(null);
+        fetchUsers();
+      } else {
+        toast.error(result.message || 'Failed to upload profile picture');
+      }
+    } catch (error) {
+      toast.error('Failed to upload profile picture');
+      console.error('Upload error:', error);
+    } finally {
+      setUploadingProfile(false);
+    }
+  };
+
   const resetForm = () => {
     setForm({
       firstName: "",
@@ -197,10 +410,13 @@ export default function UsersPage() {
       status: "active",
       department: "IT",
       phone: "",
-      joiningDate: new Date().toISOString().split('T')[0]
+      joiningDate: new Date().toISOString().split('T')[0],
+      profilePicture: null
     });
     setIsEditMode(false);
     setCurrentUserId(null);
+    setSelectedFile(null);
+    setProfilePreview(null);
     
     toast.success("Form reset successfully!", {
       duration: 2000,
@@ -214,14 +430,17 @@ export default function UsersPage() {
       firstName: user.firstName || "",
       lastName: user.lastName || "",
       email: user.email || "",
-      password: "",
+      password: "", // Don't show existing password (it's hashed anyway)
       role: user.role || "employee",
       salary: user.rate || "",
       status: user.status || "active",
       department: user.department || "IT",
       phone: user.phone || "",
-      joiningDate: user.joiningDate || new Date().toISOString().split('T')[0]
+      joiningDate: user.joiningDate || new Date().toISOString().split('T')[0],
+      profilePicture: user.profilePicture || user.picture || null
     });
+    setSelectedFile(null);
+    setProfilePreview(null);
     
     toast("Edit mode activated. Scroll to form.", {
       icon: '✏️',
@@ -286,7 +505,7 @@ export default function UsersPage() {
     
     try {
       const res = await deleteUserAPI(userId);
-      if (res.message === "User deleted successfully") {
+      if (res.message === "User deleted successfully" || res.success) {
         toast.dismiss(loadingToast);
         toast.success(`${userName} deleted successfully!`, {
           icon: '🗑️',
@@ -314,14 +533,36 @@ export default function UsersPage() {
   };
 
   const handleView = (user) => {
+    const userPicture = user.profilePicture || user.picture;
+    
     toast.custom((t) => (
       <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} 
         max-w-md w-full bg-gradient-to-br from-purple-50 to-white shadow-xl rounded-xl pointer-events-auto ring-1 ring-purple-100`}>
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center">
-              <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
-                {user.firstName?.charAt(0)}{user.lastName?.charAt(0)}
+              <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-white shadow-md bg-gradient-to-r from-purple-500 to-pink-500">
+                {userPicture ? (
+                  <img 
+                    src={userPicture} 
+                    alt={user.firstName} 
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      e.target.onerror = null;
+                      e.target.style.display = 'none';
+                      const parent = e.target.parentElement;
+                      parent.innerHTML = `
+                        <div class="w-full h-full rounded-full flex items-center justify-center text-white font-bold text-lg">
+                          ${(user.firstName?.charAt(0) || '')}${(user.lastName?.charAt(0) || '')}
+                        </div>
+                      `;
+                    }}
+                  />
+                ) : (
+                  <div className="w-full h-full rounded-full flex items-center justify-center text-white font-bold text-lg">
+                    {(user.firstName?.charAt(0) || '')}{(user.lastName?.charAt(0) || '')}
+                  </div>
+                )}
               </div>
               <div className="ml-4">
                 <h3 className="text-lg font-bold text-gray-900">
@@ -385,244 +626,35 @@ export default function UsersPage() {
     });
   };
 
-  // Reset password functionality
-  const handleResetPassword = async () => {
-    if (resetStep === 1) {
-      if (!resetData.email || !resetData.email.includes('@')) {
-        toast.error('Please enter a valid email address');
-        return;
-      }
-      
-      console.log('Sending OTP to:', resetData.email);
-      setFormLoading(true);
-      setTimeout(() => {
-        setFormLoading(false);
-        setResetStep(2);
-        toast.success(`OTP sent to ${resetData.email}`);
-      }, 1000);
-    } else if (resetStep === 2) {
-      if (!resetData.otp) {
-        toast.error('Please enter OTP');
-        return;
-      }
-      console.log('Verifying OTP:', resetData.otp);
-      setFormLoading(true);
-      setTimeout(() => {
-        setFormLoading(false);
-        setResetStep(3);
-      }, 1000);
-    } else if (resetStep === 3) {
-      if (resetData.newPassword !== resetData.confirmPassword) {
-        toast.error("Passwords don't match!");
-        return;
-      }
-      console.log('Updating password...');
-      setFormLoading(true);
-      setTimeout(() => {
-        setFormLoading(false);
-        toast.success('Password updated successfully!');
-        setIsResetPasswordMode(false);
-        setResetStep(1);
-        setResetData({
-          email: '',
-          otp: '',
-          newPassword: '',
-          confirmPassword: ''
-        });
-      }, 1000);
-    }
-  };
+  // Password input component with show/hide 
+const PasswordInput = ({ 
+  value, 
+  onChange, 
+  placeholder, 
+  required,
+  show,
+  toggleShow
+}) => (
+  <div className="relative">
+    <input
+      type={show ? "text" : "password"}
+      value={value}
+      onChange={onChange} // 👈 সরাসরি onChange ব্যবহার
+      placeholder={placeholder}
+      required={required}
+      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300 pr-12 hover:border-purple-300"
+    />
+    <button
+      type="button"
+      onClick={toggleShow}
+      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
+    >
+      {show ? <EyeOff size={20} /> : <Eye size={20} />}
+    </button>
+  </div>
+);
 
-  // Password input component with show/hide
-  const PasswordInput = ({ 
-    name, 
-    value, 
-    onChange, 
-    placeholder, 
-    required,
-    show,
-    toggleShow
-  }) => (
-    <div className="relative">
-      <input
-        name={name}
-        type={show ? "text" : "password"}
-        value={value}
-        onChange={onChange}
-        placeholder={placeholder}
-        required={required}
-        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300 pr-12"
-      />
-      <button
-        type="button"
-        onClick={toggleShow}
-        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
-      >
-        {show ? <EyeOff size={20} /> : <Eye size={20} />}
-      </button>
-    </div>
-  );
-
-  // Reset Password Modal
-  const ResetPasswordModal = () => {
-    const emailInputRef = useRef(null);
-    
-    useEffect(() => {
-      if (resetStep === 1 && emailInputRef.current) {
-        setTimeout(() => {
-          emailInputRef.current?.focus();
-        }, 100);
-      }
-    }, [resetStep]);
-
-    const handleModalInputChange = (e) => {
-      const { name, value } = e.target;
-      setResetData(prev => ({
-        ...prev,
-        [name]: value
-      }));
-    };
-
-    return (
-      <div className="fixed inset-0 backdrop-blur-sm bg-black/30 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-          <div className="p-6 border-b border-gray-100">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">
-                  Reset Password
-                </h2>
-                <p className="text-gray-500 text-sm mt-1">
-                  {resetStep === 1 && "Enter your email to receive OTP"}
-                  {resetStep === 2 && "Enter the OTP sent to your email"}
-                  {resetStep === 3 && "Enter your new password"}
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  setIsResetPasswordMode(false);
-                  setResetStep(1);
-                  setResetData({
-                    email: '',
-                    otp: '',
-                    newPassword: '',
-                    confirmPassword: ''
-                  });
-                }}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-
-          <div className="p-6 space-y-6">
-            {resetStep === 1 && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Email Address
-                </label>
-                <input
-                  ref={emailInputRef}
-                  type="email"
-                  name="email"
-                  value={resetData.email}
-                  onChange={handleModalInputChange}
-                  placeholder="Enter your email"
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                />
-              </div>
-            )}
-
-            {resetStep === 2 && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  OTP Code
-                </label>
-                <input
-                  type="text"
-                  name="otp"
-                  value={resetData.otp}
-                  onChange={handleModalInputChange}
-                  placeholder="Enter 6-digit OTP"
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                />
-                <p className="text-sm text-gray-500 mt-2">
-                  OTP sent to: {resetData.email}
-                </p>
-              </div>
-            )}
-
-            {resetStep === 3 && (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    New Password
-                  </label>
-                  <PasswordInput
-                    name="newPassword"
-                    value={resetData.newPassword}
-                    onChange={handleModalInputChange}
-                    placeholder="Enter new password"
-                    required
-                    show={showNewPassword}
-                    toggleShow={() => setShowNewPassword(!showNewPassword)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Confirm Password
-                  </label>
-                  <PasswordInput
-                    name="confirmPassword"
-                    value={resetData.confirmPassword}
-                    onChange={handleModalInputChange}
-                    placeholder="Confirm new password"
-                    required
-                    show={showConfirmPassword}
-                    toggleShow={() => setShowConfirmPassword(!showConfirmPassword)}
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-3">
-              <button
-                onClick={handleResetPassword}
-                disabled={formLoading}
-                className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3.5 rounded-xl font-semibold hover:opacity-90 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {formLoading ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Key size={20} />
-                    {resetStep === 1 ? "Send OTP" : 
-                     resetStep === 2 ? "Verify OTP" : 
-                     "Update Password"}
-                  </>
-                )}
-              </button>
-
-              {resetStep > 1 && (
-                <button
-                  type="button"
-                  onClick={() => setResetStep(resetStep - 1)}
-                  className="w-full border-2 border-gray-200 text-gray-700 py-3 rounded-xl font-medium hover:bg-gray-50 transition-all duration-300"
-                >
-                  Go Back
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
+  // Filter users based on search, role, and status
   const filteredUsers = users.filter(user => {
     const searchLower = searchTerm.toLowerCase();
     const matchesSearch = searchTerm === "" ||
@@ -637,6 +669,375 @@ export default function UsersPage() {
     return matchesSearch && matchesRole && matchesStatus;
   });
 
+  // Pagination logic
+  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, filteredUsers.length);
+  const currentUsers = filteredUsers.slice(startIndex, endIndex);
+
+  const handlePageChange = (page) => {
+    if (page < 1 || page > totalPages) return;
+    setCurrentPage(page);
+  };
+
+  // Handle Reset Password Page
+const handleOpenResetPasswordPage = (user) => {
+  setSelectedUserForReset(user);
+  
+  // Admin email ব্যবহার করুন
+  setResetData({
+    email: adminEmail, // Admin email
+    userEmail: user.email, // User's email আলাদা ভাবে সংরক্ষণ
+    otp: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  
+  setResetStep(1);
+  setShowResetPasswordPage(true);
+  
+  console.log('Opening reset for:', {
+    adminEmail: adminEmail,
+    userEmail: user.email
+  });
+}; 
+
+// Admin Request OTP - API কল ঠিক করে
+const handleAdminRequestOtp = async () => {
+  if (!selectedUserForReset?.email) {
+    toast.error('Please select a user first');
+    return;
+  }
+
+  setOtpLoading(true);
+  
+  const loadingToast = toast.custom(
+    (t) => (
+      <div className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-4 rounded-xl shadow-xl max-w-md mx-auto">
+        <div className="flex items-center gap-3">
+          <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+          <div>
+            <p className="font-bold">Generating OTP...</p>
+            <p className="text-sm opacity-90">For: {selectedUserForReset.email}</p>
+          </div>
+        </div>
+      </div>
+    ),
+    { duration: Infinity, position: 'top-center' }
+  );
+
+  try {
+    setupAxios();
+    
+    // তোমার backend endpoint: router.post('/auth/admin/request-otp', ...)
+    const response = await axios.post('/admin/request-otp', {
+      userEmail: selectedUserForReset.email
+    });
+
+    console.log('OTP Response:', response.data);
+    toast.dismiss(loadingToast);
+
+    if (response.data?.status === "success") {
+      // Success - OTP sent to admin email
+      toast.custom(
+        (t) => (
+          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden max-w-md w-full">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-purple-600 to-pink-600 p-6 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-bold">✅ OTP Sent!</h3>
+                  <p className="text-sm opacity-90">{selectedUserForReset.email}</p>
+                </div>
+                <button
+                  onClick={() => toast.dismiss(t.id)}
+                  className="text-white hover:text-gray-200"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            
+            {/* OTP Info */}
+            <div className="p-6">
+              <div className="text-center mb-6">
+                <div className="text-sm text-gray-600 mb-2">OTP Information</div>
+                <div className="flex items-center justify-center gap-4">
+                  <div className="p-4 bg-gradient-to-r from-green-100 to-emerald-100 rounded-xl">
+                    <Mail className="w-8 h-8 text-green-600 mx-auto mb-2" />
+                    <p className="text-xs text-gray-600">Sent to:</p>
+                    <p className="text-sm font-semibold text-gray-900">{adminEmail}</p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="space-y-3">
+                <button
+                  onClick={() => {
+                    setResetStep(2);
+                    toast.dismiss(t.id);
+                    toast.success('Proceed to OTP verification', { duration: 2000 });
+                  }}
+                  className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 rounded-xl font-bold hover:opacity-90 transition-all"
+                >
+                  Verify OTP
+                </button>
+                
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="text-yellow-600 flex-shrink-0 mt-0.5" size={20} />
+                    <div className="text-sm text-yellow-800">
+                      <p className="font-semibold">Important:</p>
+                      <p>Check {adminEmail} for the OTP code. Check spam folder if not found.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Footer */}
+            <div className="bg-gray-50 px-6 py-4 border-t border-gray-200">
+              <div className="flex justify-between text-xs text-gray-500">
+                <span>OTP valid for 10 minutes</span>
+                <span>Step 1 of 3</span>
+              </div>
+            </div>
+          </div>
+        ),
+        {
+          duration: 15000,
+          position: 'top-center'
+        }
+      );
+      
+      // Auto move to step 2 after 3 seconds
+      setTimeout(() => {
+        if (resetStep === 1) {
+          setResetStep(2);
+          toast.success('Proceeding to OTP verification...', { duration: 2000 });
+        }
+      }, 3000);
+      
+    } else {
+      toast.error(response.data?.message || 'Failed to send OTP');
+    }
+    
+  } catch (error) {
+    toast.dismiss(loadingToast);
+    console.error('OTP Error:', error);
+    
+    // User-friendly error messages
+    let errorMessage = 'Failed to generate OTP';
+    if (error.response?.status === 404) {
+      errorMessage = 'User not found in system';
+    } else if (error.response?.status === 403) {
+      errorMessage = 'Access denied. Admin permission required.';
+    } else if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    } else if (error.message.includes('network')) {
+      errorMessage = 'Network error. Please check connection.';
+    } else if (error.message.includes('request failed')) {
+      errorMessage = 'Server error. Please try again.';
+    }
+    
+    toast.error(`❌ ${errorMessage}`);
+  } finally {
+    setOtpLoading(false);
+  }
+};
+
+
+// Admin Verify OTP and Reset Password - API কল ঠিক করে
+const handleAdminVerifyOtpAndReset = async () => {
+  // Validation
+  if (!resetData.otp || resetData.otp.length !== 6) {
+    toast.error('Please enter a valid 6-digit OTP');
+    return;
+  }
+
+  if (resetData.newPassword.length < 6) {
+    toast.error('Password must be at least 6 characters');
+    return;
+  }
+
+  if (resetData.newPassword !== resetData.confirmPassword) {
+    toast.error("Passwords don't match!");
+    return;
+  }
+
+  setResetPasswordLoading(true);
+  
+  const loadingToast = toast.custom(
+    (t) => (
+      <div className="bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-6 py-4 rounded-xl shadow-xl max-w-md mx-auto">
+        <div className="flex items-center gap-3">
+          <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+          <div>
+            <p className="font-bold">Resetting Password...</p>
+            <p className="text-sm opacity-90">For: {selectedUserForReset?.email}</p>
+          </div>
+        </div>
+      </div>
+    ),
+    { duration: Infinity, position: 'top-center' }
+  );
+
+  try {
+    setupAxios();
+    
+    console.log('🔐 Resetting password for user:', {
+      userEmail: selectedUserForReset?.email,
+      otp: resetData.otp,
+      passwordLength: resetData.newPassword.length
+    });
+
+    // তোমার backend endpoint: router.post('/auth/admin/reset-password', ...)
+    const response = await axios.post('/admin/reset-password', {
+      userEmail: selectedUserForReset?.email, // User's email
+      otp: parseInt(resetData.otp), // OTP as number
+      newPassword: resetData.newPassword
+    });
+
+    console.log('🔑 Reset Password Response:', response.data);
+    toast.dismiss(loadingToast);
+
+    if (response.data?.status === "success") {
+      toast.success(
+        <div className="text-center">
+          <div className="font-bold text-lg">✅ Password Reset Successful!</div>
+          <div className="text-sm text-gray-600 mt-1">
+            Password updated for {selectedUserForReset?.email}
+          </div>
+        </div>,
+        {
+          duration: 5000,
+          icon: '🔑',
+          style: {
+            borderRadius: '12px',
+            background: '#10B981',
+            color: '#fff',
+          }
+        }
+      );
+      
+      // Close reset page and go back to users list
+      handleCloseResetPasswordPage();
+      
+      // Refresh user list
+      fetchUsers();
+      
+    } else {
+      throw new Error(response.data?.message || 'Failed to reset password');
+    }
+  } catch (error) {
+    toast.dismiss(loadingToast);
+    console.error('Reset Password Error:', error);
+    
+    let errorMessage = 'Failed to reset password';
+    if (error.response?.status === 400) {
+      if (error.response.data?.message?.includes('Invalid OTP')) {
+        errorMessage = '❌ Invalid OTP. Please check and try again.';
+      } else if (error.response.data?.message?.includes('expired')) {
+        errorMessage = '❌ OTP expired. Please request a new one.';
+      } else {
+        errorMessage = error.response.data?.message || 'Invalid request';
+      }
+    } else if (error.response?.status === 404) {
+      errorMessage = '❌ User not found';
+    } else if (error.response?.status === 403) {
+      errorMessage = '❌ Admin permission required';
+    } else if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    } else if (error.message.includes('network')) {
+      errorMessage = '❌ Network error. Check your connection.';
+    }
+
+    toast.error(errorMessage, {
+      duration: 5000,
+      icon: '🔴'
+    });
+  } finally {
+    setResetPasswordLoading(false);
+  }
+};
+// Handle Close Reset Password Page
+const handleCloseResetPasswordPage = () => {
+  setShowResetPasswordPage(false);
+  setSelectedUserForReset(null);
+  setResetStep(1);
+  setResetData({
+    email: '',
+    otp: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+};
+
+// Step 2 এর JSX অংশ আপডেট করুন - Verify OTP section
+{resetStep === 2 && (
+  <div>
+    <h3 className="text-lg font-semibold text-gray-900 mb-4">Step 2: Verify OTP</h3>
+    <div className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Enter 6-digit OTP
+        </label>
+        <input
+          type="text"
+          value={resetData.otp}
+          onChange={(e) => setResetData(prev => ({ 
+            ...prev, 
+            otp: e.target.value.replace(/\D/g, '').slice(0, 6) 
+          }))}
+          placeholder="Enter OTP sent to admin email"
+          maxLength={6}
+          className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300 text-center text-2xl tracking-widest font-mono"
+        />
+        <div className="text-center mt-2 space-y-1">
+          <p className="text-sm text-gray-500">
+            OTP sent to: 
+            <span className="font-medium text-blue-600 ml-1">{adminEmail}</span>
+          </p>
+          <p className="text-xs text-gray-400">
+            (Password reset for: {selectedUserForReset?.email})
+          </p>
+          <p className="text-xs text-amber-600">
+            ⚠️ Check spam folder if not found in inbox
+          </p>
+        </div>
+      </div>
+      
+      <div className="flex items-center justify-between">
+        <button
+          onClick={handleAdminRequestOtp}
+          disabled={otpLoading}
+          className="flex items-center gap-2 text-purple-600 hover:text-purple-700 text-sm disabled:opacity-50"
+        >
+          <RefreshCw size={14} className={otpLoading ? 'animate-spin' : ''} />
+          {otpLoading ? 'Sending...' : 'Resend OTP'}
+        </button>
+        
+        <button
+          onClick={() => {
+            // Test OTP (development only - production এ remove করবেন)
+            if (process.env.NODE_ENV === 'development') {
+              setResetData(prev => ({ 
+                ...prev, 
+                otp: '123456' 
+              }));
+              toast.success('Demo OTP: 123456', { duration: 2000 });
+            }
+          }}
+          className="text-xs text-gray-400 hover:text-gray-600"
+        >
+          Demo OTP
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+
   // Calculate statistics
   const stats = {
     total: users.length,
@@ -645,6 +1046,285 @@ export default function UsersPage() {
     employees: users.filter(u => u.role === "employee").length,
     totalSalary: users.reduce((sum, user) => sum + (user.rate || 0), 0)
   };
+
+  // Function to get user initials
+  const getUserInitials = (user) => {
+    return `${user.firstName?.charAt(0) || ''}${user.lastName?.charAt(0) || ''}`.toUpperCase();
+  };
+
+  // Reset Password Page Component
+  const ResetPasswordPage = () => {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50 p-4 md:p-6">
+        <div className="max-w-4xl mx-auto">
+          {/* Header */}
+          <div className="mb-6">
+            <button
+              onClick={handleCloseResetPasswordPage}
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4"
+            >
+              <ArrowLeft size={20} />
+              Back to Users
+            </button>
+            
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                  Admin: Reset User Password
+                </h1>
+                <p className="text-gray-600 mt-2">
+                  Secure password reset process for {selectedUserForReset?.firstName} {selectedUserForReset?.lastName}
+                </p>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <div className="text-sm text-gray-500">
+                  Step {resetStep} of 3
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* User Info Card */}
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 mb-6">
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-white shadow-sm flex-shrink-0 bg-gradient-to-r from-purple-500 to-pink-500">
+                {selectedUserForReset?.profilePicture ? (
+                  <img 
+                    src={selectedUserForReset.profilePicture} 
+                    alt={selectedUserForReset.firstName} 
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full rounded-full flex items-center justify-center text-white font-bold text-lg">
+                    {getUserInitials(selectedUserForReset)}
+                  </div>
+                )}
+              </div>
+              
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-gray-900">
+                  {selectedUserForReset?.firstName} {selectedUserForReset?.lastName}
+                </h3>
+                <div className="flex flex-wrap gap-4 mt-2">
+                  <div className="flex items-center gap-2">
+                    <Mail size={14} className="text-gray-400" />
+                    <span className="text-sm text-gray-600">{selectedUserForReset?.email}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <UserCog size={14} className="text-gray-400" />
+                    <span className="text-sm text-gray-600 capitalize">{selectedUserForReset?.role}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Building size={14} className="text-gray-400" />
+                    <span className="text-sm text-gray-600">{selectedUserForReset?.department || 'Not assigned'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Reset Steps */}
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+            {/* Step Indicators */}
+            <div className="flex items-center justify-between mb-8">
+              {[1, 2, 3].map((step) => (
+                <div key={step} className="flex flex-col items-center">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${
+                    resetStep === step 
+                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' 
+                      : resetStep > step 
+                      ? 'bg-green-100 text-green-600'
+                      : 'bg-gray-100 text-gray-400'
+                  }`}>
+                    {resetStep > step ? <Check size={20} /> : step}
+                  </div>
+                  <span className={`text-xs font-medium ${
+                    resetStep === step ? 'text-purple-600' : 'text-gray-500'
+                  }`}>
+                    {step === 1 ? 'Request OTP' : step === 2 ? 'Verify OTP' : 'Reset Password'}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Step Content */}
+            <div className="space-y-6">
+              {/* Step 1: Request OTP */}   
+{resetStep === 1 && (
+  <div>
+    <h3 className="text-lg font-semibold text-gray-900 mb-4">Step 1: Request OTP</h3>
+    <div className="space-y-4">
+      {/* User Info */}
+      <div className="bg-gray-50 rounded-xl p-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white font-bold">
+            {selectedUserForReset?.firstName?.charAt(0)}{selectedUserForReset?.lastName?.charAt(0)}
+          </div>
+          <div>
+            <p className="font-medium text-gray-900">
+              {selectedUserForReset?.firstName} {selectedUserForReset?.lastName}
+            </p>
+            <p className="text-sm text-gray-600">{selectedUserForReset?.email}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Admin Email Info */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+        <div className="flex items-start gap-3">
+          <Mail className="text-blue-500 flex-shrink-0 mt-0.5" size={20} />
+          <div>
+            <h4 className="text-sm font-semibold text-blue-800">OTP Destination</h4>
+            <p className="text-sm text-blue-600 mt-1">
+              OTP will be sent to: <span className="font-bold">{process.env.NEXT_PUBLIC_ADMIN_EMAIL}</span>
+            </p>
+            <p className="text-xs text-blue-500 mt-2">
+              Make sure this email is accessible. Check spam folder if needed.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+ 
+{/* Step 2: Verify OTP */}
+{resetStep === 2 && (
+  <div>
+    <h3 className="text-lg font-semibold text-gray-900 mb-4">Step 2: Verify OTP</h3>
+    <div className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Enter 6-digit OTP
+        </label>
+        <input
+          type="text"
+          value={resetData.otp}
+          onChange={(e) => setResetData(prev => ({ ...prev, otp: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+          placeholder="Enter OTP sent to admin email"
+          maxLength={6}
+          className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300 text-center text-2xl tracking-widest"
+        />
+        <p className="text-sm text-gray-500 mt-2 text-center">
+          OTP sent to: 
+          <span className="font-medium"> {adminEmail} </span>
+        </p>
+        <p className="text-sm text-gray-400 mt-1 text-center">
+          (Password reset for: {selectedUserForReset?.email})
+        </p>
+      </div>
+      
+      <button
+        onClick={handleAdminRequestOtp}
+        disabled={otpLoading}
+        className="flex items-center gap-2 text-purple-600 hover:text-purple-700 text-sm"
+      >
+        <RefreshCw size={14} className={otpLoading ? 'animate-spin' : ''} />
+        {otpLoading ? 'Sending...' : 'Resend OTP'}
+      </button>
+    </div>
+  </div>
+)}
+ 
+{resetStep === 3 && (
+  <div>
+    <h3 className="text-lg font-semibold text-gray-900 mb-4">Step 3: Set New Password</h3>
+    <div className="space-y-4">
+      {/* ... existing password fields ... */}
+      
+      <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 rounded-xl p-4">
+        <div className="flex items-start gap-3">
+          <Info className="text-blue-500 flex-shrink-0 mt-0.5" size={20} />
+          <div>
+            <h4 className="text-sm font-semibold text-blue-800">About This Process</h4>
+            <ul className="text-sm text-blue-600 mt-1 space-y-1">
+              <li>• Password reset is done via Admin OTP verification</li>
+              <li>• User will receive no notification about password change</li>
+              <li>• For security, notify the user separately</li>
+              <li>• User will be logged out from all sessions</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+              {/* Action Buttons */}
+              <div className="pt-6 border-t border-gray-200">
+                <div className="flex justify-between">
+                  {resetStep > 1 ? (
+                    <button
+                      onClick={() => setResetStep(resetStep - 1)}
+                      className="px-6 py-3 border-2 border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all duration-300 flex items-center gap-2"
+                    >
+                      <ArrowLeft size={18} />
+                      Previous Step
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleCloseResetPasswordPage}
+                      className="px-6 py-3 border-2 border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all duration-300"
+                    >
+                      Cancel
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => {
+                      if (resetStep === 1) handleAdminRequestOtp();
+                      else if (resetStep === 2) setResetStep(3);
+                      else if (resetStep === 3) handleAdminVerifyOtpAndReset();
+                    }}
+                    disabled={otpLoading || resetPasswordLoading}
+                    className="px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl font-semibold hover:opacity-90 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {otpLoading || resetPasswordLoading ? (
+                      <>
+                        <Loader2 className="animate-spin" size={18} />
+                        {resetStep === 1 ? 'Sending OTP...' : 
+                         resetStep === 2 ? 'Verifying...' : 
+                         'Resetting Password...'}
+                      </>
+                    ) : (
+                      <>
+                        {resetStep === 1 ? 'Send OTP to Admin' : 
+                         resetStep === 2 ? 'Verify OTP & Continue' : 
+                         'Reset Password'}
+                        {resetStep === 3 && <Key size={18} />}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Main Users Page
+  if (showResetPasswordPage) {
+    return (
+      <>
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 4000,
+            style: {
+              background: '#363636',
+              color: '#fff',
+              borderRadius: '12px',
+              border: '1px solid rgba(255,255,255,0.1)',
+              padding: '16px',
+            },
+          }}
+        />
+        <ResetPasswordPage />
+      </>
+    );
+  }
 
   return (
     <>
@@ -680,12 +1360,12 @@ export default function UsersPage() {
         }}
       />
 
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50 p-6">
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50 p-4 md:p-6">
         {/* Header Section */}
-        <div className="mb-8">
+        <div className="mb-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+              <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
                 Employee Management
               </h1>
               <p className="text-gray-600 mt-2">Manage all system users with advanced controls</p>
@@ -706,104 +1386,104 @@ export default function UsersPage() {
             </div>
           </div>
 
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-300">
+          {/* Stats Cards - Compact Version */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-white rounded-xl p-4 shadow-md border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500 font-medium">Total Users</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">{stats.total}</p>
-                  <p className="text-xs text-gray-400 mt-1">All system users</p>
+                  <p className="text-xs text-gray-500 font-medium">Total Users</p>
+                  <p className="text-xl font-bold text-gray-900 mt-1">{stats.total}</p>
                 </div>
-                <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl flex items-center justify-center">
-                  <Users className="text-white" size={24} />
+                <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-purple-600 rounded-lg flex items-center justify-center">
+                  <Users className="text-white" size={18} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-300">
+            <div className="bg-white rounded-xl p-4 shadow-md border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500 font-medium">Active Users</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">{stats.active}</p>
-                  <p className="text-xs text-green-500 mt-1 flex items-center">
-                    <TrendingUp size={12} className="mr-1" />
-                    Currently active
-                  </p>
+                  <p className="text-xs text-gray-500 font-medium">Active Users</p>
+                  <p className="text-xl font-bold text-gray-900 mt-1">{stats.active}</p>
                 </div>
-                <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl flex items-center justify-center">
-                  <UserCheck className="text-white" size={24} />
+                <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
+                  <UserCheck className="text-white" size={18} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-300">
+            <div className="bg-white rounded-xl p-4 shadow-md border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500 font-medium">Administrators</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">{stats.admins}</p>
-                  <p className="text-xs text-blue-500 mt-1">Full access users</p>
+                  <p className="text-xs text-gray-500 font-medium">Administrators</p>
+                  <p className="text-xl font-bold text-gray-900 mt-1">{stats.admins}</p>
                 </div>
-                <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-cyan-600 rounded-xl flex items-center justify-center">
-                  <Shield className="text-white" size={24} />
+                <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-cyan-600 rounded-lg flex items-center justify-center">
+                  <Shield className="text-white" size={18} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-shadow duration-300">
+            <div className="bg-white rounded-xl p-4 shadow-md border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500 font-medium">Monthly Salary</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">৳{stats.totalSalary.toLocaleString()}</p>
-                  <p className="text-xs text-yellow-500 mt-1">Total monthly payout</p>
+                  <p className="text-xs text-gray-500 font-medium">Monthly Salary</p>
+                  <p className="text-xl font-bold text-gray-900 mt-1">৳{(stats.totalSalary/1000).toFixed(0)}k</p>
                 </div>
-                <div className="w-12 h-12 bg-gradient-to-r from-yellow-500 to-orange-600 rounded-xl flex items-center justify-center">
-                  <CreditCard className="text-white" size={24} />
+                <div className="w-8 h-8 bg-gradient-to-r from-yellow-500 to-orange-600 rounded-lg flex items-center justify-center">
+                  <CreditCard className="text-white" size={18} />
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left Column - Form */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column - User List (No Scroll, Fixed Height) */}
           <div className="lg:col-span-2">
-            {/* User List Table */}
-            <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-xl border border-gray-100 overflow-hidden mb-8">
-              <div className="p-6 border-b border-gray-100">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-200 flex flex-col">
+              <div className="p-4 border-b border-gray-200 flex-shrink-0">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-xl font-bold text-gray-900">Employee Directory</h2>
-                    <p className="text-gray-500 text-sm">
-                      {filteredUsers.length} of {users.length} users found
+                    <h2 className="text-lg font-bold text-gray-900">Employee Directory</h2>
+                    <p className="text-gray-500 text-xs sm:text-sm">
+                      Showing {startIndex + 1}-{endIndex} of {filteredUsers.length} users
                     </p>
                   </div>
-                  <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex flex-col sm:flex-row gap-2">
                     <div className="relative">
-                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
                       <input
                         type="text"
                         placeholder="Search users..."
                         value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none w-full transition-all duration-300"
+                        onChange={(e) => {
+                          setSearchTerm(e.target.value);
+                          setCurrentPage(1); // Reset to first page on search
+                        }}
+                        className="pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none w-full text-sm"
                       />
                     </div>
                     <div className="flex gap-2">
                       <select
                         value={selectedRole}
-                        onChange={(e) => setSelectedRole(e.target.value)}
-                        className="px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none transition-all duration-300"
+                        onChange={(e) => {
+                          setSelectedRole(e.target.value);
+                          setCurrentPage(1); // Reset to first page on filter
+                        }}
+                        className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none text-sm"
                       >
                         <option value="all">All Roles</option>
                         <option value="admin">Admin</option>
                         <option value="employee">Employee</option>
-                        <option value="manager">Manager</option>
                       </select>
                       <select
                         value={selectedStatus}
-                        onChange={(e) => setSelectedStatus(e.target.value)}
-                        className="px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none transition-all duration-300"
+                        onChange={(e) => {
+                          setSelectedStatus(e.target.value);
+                          setCurrentPage(1); // Reset to first page on filter
+                        }}
+                        className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none text-sm"
                       >
                         <option value="all">All Status</option>
                         <option value="active">Active</option>
@@ -814,139 +1494,207 @@ export default function UsersPage() {
                 </div>
               </div>
 
-              {loading ? (
-                <div className="p-12 text-center">
-                  <div className="inline-flex flex-col items-center">
-                    <div className="w-16 h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mb-4"></div>
-                    <p className="text-gray-600 font-medium">Loading users...</p>
-                    <p className="text-gray-400 text-sm mt-2">Please wait a moment</p>
+              {/* User List Container - Fixed Height with Scroll */}
+              <div className="flex-1 overflow-hidden">
+                {loading ? (
+                  <div className="h-full flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="w-12 h-12 border-3 border-purple-200 border-t-purple-600 rounded-full animate-spin mb-3 mx-auto"></div>
+                      <p className="text-gray-600 font-medium">Loading users...</p>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="bg-gradient-to-r from-gray-50 to-gray-100">
-                        <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">
-                          User
-                        </th>
-                        <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">
-                          Role
-                        </th>
-                        <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">
-                          Status
-                        </th>
-                        <th className="text-left py-4 px-6 text-sm font-semibold text-gray-700 uppercase tracking-wider">
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {filteredUsers.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="py-16 px-6 text-center">
-                            <div className="flex flex-col items-center justify-center">
-                              <div className="w-20 h-20 bg-gradient-to-r from-gray-100 to-gray-200 rounded-full flex items-center justify-center mb-4">
-                                <UserCog className="text-gray-400" size={32} />
-                              </div>
-                              <h3 className="text-lg font-semibold text-gray-700 mb-2">No users found</h3>
-                              <p className="text-gray-500 max-w-md">
-                                {searchTerm || selectedRole !== "all" || selectedStatus !== "all" 
-                                  ? 'Try adjusting your search or filters' 
-                                  : 'Start by creating your first user'}
-                              </p>
-                            </div>
-                          </td>
+                ) : (
+                  <div className="h-full overflow-y-auto">
+                    <table className="w-full">
+                      <thead className="sticky top-0 bg-white z-10 border-b border-gray-200">
+                        <tr className="bg-gray-50">
+                          <th className="text-left p-3 text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                            User
+                          </th>
+                          <th className="text-left p-3 text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                            Role & Status
+                          </th>
+                          <th className="text-left p-3 text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                            Actions
+                          </th>
                         </tr>
-                      ) : (
-                        filteredUsers.map((user) => (
-                          <tr key={user._id} className="hover:bg-gray-50 transition-colors duration-200">
-                            <td className="py-4 px-6">
-                              <div className="flex items-center">
-                                <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-white font-bold text-lg">
-                                  {user.firstName?.charAt(0)}{user.lastName?.charAt(0)}
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {currentUsers.length === 0 ? (
+                          <tr>
+                            <td colSpan={3} className="p-8 text-center">
+                              <div className="flex flex-col items-center justify-center">
+                                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-3">
+                                  <UserCog className="text-gray-400" size={24} />
                                 </div>
-                                <div className="ml-4">
-                                  <div className="font-semibold text-gray-900">
-                                    {user.firstName} {user.lastName}
-                                  </div>
-                                  <div className="text-sm text-gray-500 flex items-center mt-1">
-                                    <Mail size={12} className="mr-1" />
-                                    {user.email}
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-4 px-6">
-                              <div className="flex items-center">
-                                <div className={`p-2 rounded-lg ${
-                                  user.role === 'admin' 
-                                    ? 'bg-purple-100 text-purple-800' 
-                                    : user.role === 'manager'
-                                    ? 'bg-blue-100 text-blue-800'
-                                    : 'bg-green-100 text-green-800'
-                                }`}>
-                                  {user.role === 'admin' && <Shield size={16} />}
-                                  {user.role === 'manager' && <UserCog size={16} />}
-                                  {user.role === 'employee' && <Users size={16} />}
-                                </div>
-                                <span className="ml-2 font-medium capitalize">{user.role}</span>
-                              </div>
-                            </td>
-                            <td className="py-4 px-6">
-                              <div className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium
-                                bg-gradient-to-r from-green-50 to-emerald-50 text-emerald-700 border border-emerald-200">
-                                <div className="w-2 h-2 bg-emerald-500 rounded-full mr-2"></div>
-                                {user.status?.charAt(0).toUpperCase() + user.status?.slice(1)}
-                              </div>
-                            </td>
-                            <td className="py-4 px-6">
-                              <div className="flex items-center space-x-2">
-                                <button
-                                  onClick={() => handleView(user)}
-                                  className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors duration-200"
-                                  title="View Details"
-                                >
-                                  <Eye size={18} />
-                                </button>
-                                <button
-                                  onClick={() => handleEdit(user)}
-                                  className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors duration-200"
-                                  title="Edit User"
-                                >
-                                  <Edit size={18} />
-                                </button>
-                                <button
-                                  onClick={() => handleDelete(user._id, `${user.firstName} ${user.lastName}`)}
-                                  className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors duration-200"
-                                  title="Delete User"
-                                >
-                                  <Trash2 size={18} />
-                                </button>
+                                <h3 className="text-sm font-semibold text-gray-700 mb-1">No users found</h3>
+                                <p className="text-xs text-gray-500">
+                                  {searchTerm || selectedRole !== "all" || selectedStatus !== "all" 
+                                    ? 'Try adjusting your search or filters' 
+                                    : 'Start by creating your first user'}
+                                </p>
                               </div>
                             </td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {filteredUsers.length > 0 && (
-                <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
-                  <div className="text-sm text-gray-500">
-                    Showing {Math.min(filteredUsers.length, 10)} of {filteredUsers.length} users
+                        ) : (
+                          currentUsers.map((user) => {
+                            const userPicture = user.profilePicture || user.picture;
+                            return (
+                              <tr key={user._id} className="hover:bg-gray-50">
+                                <td className="p-3">
+                                  <div className="flex items-center">
+                                    <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-white shadow-sm flex-shrink-0 bg-gradient-to-r from-purple-500 to-pink-500">
+                                      {userPicture ? (
+                                        <img 
+                                          src={userPicture} 
+                                          alt={user.firstName} 
+                                          className="w-full h-full object-cover"
+                                          onError={(e) => {
+                                            e.target.onerror = null;
+                                            e.target.style.display = 'none';
+                                            const parent = e.target.parentElement;
+                                            parent.innerHTML = `
+                                              <div class="w-full h-full rounded-full flex items-center justify-center text-white font-bold text-sm">
+                                                ${getUserInitials(user)}
+                                              </div>
+                                            `;
+                                          }}
+                                        />
+                                      ) : (
+                                        <div className="w-full h-full rounded-full flex items-center justify-center text-white font-bold text-sm">
+                                          {getUserInitials(user)}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="ml-3 min-w-0">
+                                      <div className="font-semibold text-gray-900 text-sm truncate">
+                                        {user.firstName} {user.lastName}
+                                      </div>
+                                      <div className="text-xs text-gray-500 truncate flex items-center">
+                                        <Mail size={10} className="mr-1 flex-shrink-0" />
+                                        <span className="truncate">{user.email}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="p-3">
+                                  <div className="space-y-1">
+                                    <div className="flex items-center">
+                                      <div className={`p-1.5 rounded ${
+                                        user.role === 'admin' 
+                                          ? 'bg-purple-100 text-purple-800' 
+                                          : user.role === 'manager'
+                                          ? 'bg-blue-100 text-blue-800'
+                                          : 'bg-green-100 text-green-800'
+                                      }`}>
+                                        {user.role === 'admin' && <Shield size={12} />}
+                                        {user.role === 'manager' && <UserCog size={12} />}
+                                        {user.role === 'employee' && <Users size={12} />}
+                                      </div>
+                                      <span className="ml-2 text-xs font-medium capitalize">{user.role}</span>
+                                    </div>
+                                    <div className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
+                                      ${user.status === 'active' 
+                                        ? 'bg-green-50 text-green-700 border border-green-200'
+                                        : 'bg-red-50 text-red-700 border border-red-200'
+                                      }`}>
+                                      <div className={`w-1.5 h-1.5 rounded-full mr-1 ${user.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                                      {user.status?.charAt(0).toUpperCase() + user.status?.slice(1)}
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="p-3">
+                                  <div className="flex items-center space-x-1">
+                                    <button
+                                      onClick={() => handleView(user)}
+                                      className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                      title="View Details"
+                                    >
+                                      <Eye size={14} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleEdit(user)}
+                                      className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                      title="Edit User"
+                                    >
+                                      <Edit size={14} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDelete(user._id, `${user.firstName} ${user.lastName}`)}
+                                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                      title="Delete User"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleOpenResetPasswordPage(user)}
+                                      className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                      title="Reset Password"
+                                    >
+                                      <Lock size={14} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <button className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors duration-200">
-                      Previous
+                )}
+              </div>
+
+              {/* Pagination Controls */}
+              {filteredUsers.length > 0 && (
+                <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between text-xs text-gray-500 flex-shrink-0">
+                  <div>
+                    Page {currentPage} of {totalPages}
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <button
+                      onClick={() => handlePageChange(currentPage - 1)}
+                      disabled={currentPage === 1}
+                      className="p-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Previous Page"
+                    >
+                      <ChevronLeft size={14} />
                     </button>
-                    <button className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg">
-                      1
-                    </button>
-                    <button className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors duration-200">
-                      Next
+                    
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum;
+                      if (totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        pageNum = i + 1;
+                      } else if (currentPage >= totalPages - 2) {
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        pageNum = currentPage - 2 + i;
+                      }
+                      
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => handlePageChange(pageNum)}
+                          className={`px-3 py-1.5 rounded-lg transition-colors ${
+                            currentPage === pageNum
+                              ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                    
+                    <button
+                      onClick={() => handlePageChange(currentPage + 1)}
+                      disabled={currentPage === totalPages}
+                      className="p-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Next Page"
+                    >
+                      <ChevronRight size={14} />
                     </button>
                   </div>
                 </div>
@@ -956,24 +1704,22 @@ export default function UsersPage() {
 
           {/* Right Column - Form */}
           <div className="lg:col-span-1">
-            {isResetPasswordMode && <ResetPasswordModal />}
-            
-            <div id="userForm" className="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-xl border border-gray-100 sticky top-6">
-              <div className="p-6 border-b border-gray-100">
+            <div id="userForm" className="bg-white rounded-2xl shadow-lg border border-gray-200 sticky top-6">
+              <div className="p-4 border-b border-gray-200">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-xl font-bold text-gray-900">
+                    <h2 className="text-lg font-bold text-gray-900">
                       {isEditMode ? "Edit User" : "Create Employee"}
                     </h2>
-                    <p className="text-gray-500 text-sm mt-1">
+                    <p className="text-gray-500 text-xs mt-1">
                       {isEditMode ? "Update user details" : "Add a new user to the system"}
                     </p>
                   </div>
                   {isEditMode && (
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       <button
                         onClick={resetForm}
-                        className="text-sm text-gray-500 hover:text-gray-700 font-medium"
+                        className="text-xs text-gray-500 hover:text-gray-700 font-medium"
                       >
                         Cancel
                       </button>
@@ -982,185 +1728,201 @@ export default function UsersPage() {
                 </div>
               </div>
 
-              <form onSubmit={handleSubmit} className="p-6 space-y-6">
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Full Name
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <input
-                        name="firstName"
-                        value={form.firstName}
-                        onChange={handleChange}
-                        placeholder="First"
-                        required
-                        className="px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                      />
-                      <input
-                        name="lastName"
-                        value={form.lastName}
-                        onChange={handleChange}
-                        placeholder="Last"
-                        required
-                        className="px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                      />
-                    </div>
-                  </div>
+              <form onSubmit={handleSubmit} className="p-4 space-y-4">
+                {/* Profile Picture Upload Section */}
+<div className="space-y-3">
+    <div>
+      <label className="block text-xs font-medium text-gray-700 mb-1">
+        Full Name
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        <input
+          name="firstName"
+          value={form.firstName}
+          onChange={handleChange}
+          placeholder="First"
+          required
+          className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm transition-colors hover:border-purple-300"
+        />
+        <input
+          name="lastName"
+          value={form.lastName}
+          onChange={handleChange}
+          placeholder="Last"
+          required
+          className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm transition-colors hover:border-purple-300"
+        />
+      </div>
+    </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Email Address
-                    </label>
-                    <input
-                      name="email"
-                      type="email"
-                      value={form.email}
-                      onChange={handleChange}
-                      placeholder="user@company.com"
-                      required
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                    />
-                  </div>
+    <div>
+      <label className="block text-xs font-medium text-gray-700 mb-1">
+        Email Address
+      </label>
+      <input
+        name="email"
+        type="email"
+        value={form.email}
+        onChange={handleChange}
+        placeholder="user@company.com"
+        required
+        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm transition-colors hover:border-purple-300"
+      />
+    </div>
 
-                  {!isEditMode && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Password
-                      </label>
-                      <PasswordInput
-                        name="password"
-                        value={form.password}
-                        onChange={handleChange}
-                        placeholder="••••••••"
-                        required={!isEditMode}
-                        show={showPassword}
-                        toggleShow={() => setShowPassword(!showPassword)}
-                      />
-                    </div>
-                  )}
+    {/* ✅ FIXED PASSWORD FIELD */}
+    {!isEditMode && (
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1">
+          Password
+        </label>
+        <div className="relative">
+          <input
+            type={showPassword ? "text" : "password"}
+            name="password"
+            value={form.password}
+            onChange={handleChange}
+            placeholder="Enter password"
+            required={!isEditMode}
+            className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm transition-colors hover:border-purple-300 pr-10"
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          >
+            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 mt-1">
+          Password must be at least 6 characters
+        </p>
+      </div>
+    )}
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Role & Status
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <select
-                        name="role"
-                        value={form.role}
-                        onChange={handleChange}
-                        className="px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                      >
-                        <option value="employee">Employee</option>
-                        <option value="admin">Admin</option>
-                        <option value="manager">Manager</option>
-                      </select>
-                      <select
-                        name="status"
-                        value={form.status}
-                        onChange={handleChange}
-                        className="px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                      >
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
-                      </select>
-                    </div>
-                  </div>
+    <div>
+      <label className="block text-xs font-medium text-gray-700 mb-1">
+        Role & Status
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        <select
+          name="role"
+          value={form.role}
+          onChange={handleChange}
+          className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm transition-colors hover:border-purple-300"
+        >
+          <option value="employee">Employee</option>
+          <option value="admin">Admin</option>
+        </select>
+        <select
+          name="status"
+          value={form.status}
+          onChange={handleChange}
+          className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm transition-colors hover:border-purple-300"
+        >
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </div>
+    </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Additional Information
-                    </label>
-                    <div className="space-y-3">
-                      <input
-                        name="phone"
-                        value={form.phone}
-                        onChange={handleChange}
-                        placeholder="Phone Number"
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                      />
-                      <select
-                        name="department"
-                        value={form.department}
-                        onChange={handleChange}
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                      >
-                        <option value="IT">IT Department</option>
-                        <option value="HR">Human Resources</option>
-                        <option value="Finance">Finance</option>
-                        <option value="Marketing">Marketing</option>
-                        <option value="Sales">Sales</option>
-                      </select>
-                      <input
-                        name="salary"
-                        type="number"
-                        value={form.salary}
-                        onChange={handleChange}
-                        placeholder="Monthly Salary (৳)"
-                        required
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all duration-300"
-                      />
-                    </div>
-                  </div>
-                </div>
+    <div>
+      <label className="block text-xs font-medium text-gray-700 mb-1">
+        Additional Information
+      </label>
+      <div className="space-y-2">
+        <input
+          name="phone"
+          value={form.phone}
+          onChange={handleChange}
+          placeholder="Phone Number"
+          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm transition-colors hover:border-purple-300"
+        />
+        <select
+          name="department"
+          value={form.department}
+          onChange={handleChange}
+          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm transition-colors hover:border-purple-300"
+        >
+          <option value="IT">IT Department</option>
+          <option value="HR">Human Resources</option>
+          <option value="Finance">Finance</option>
+          <option value="Marketing">Marketing</option>
+          <option value="Sales">Sales</option>
+        </select>
+        <input
+          name="salary"
+          type="number"
+          value={form.salary}
+          onChange={handleChange}
+          placeholder="Monthly Salary (৳)"
+          required
+          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm transition-colors hover:border-purple-300"
+        />
+      </div>
+    </div>
+  </div>
 
-                {/* Reset Password Button - শুধুমাত্র Edit mode-এ */}
-                {isEditMode && form.email && (
-                  <div className="pt-2 border-t border-gray-100">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setResetData(prev => ({ ...prev, email: form.email }));
-                        setIsResetPasswordMode(true);
-                      }}
-                      className="group w-full inline-flex items-center justify-center gap-2 text-sm text-purple-600 hover:text-purple-700 font-medium py-2.5 px-4 border border-purple-100 rounded-xl hover:border-purple-300 hover:bg-purple-50/50 transition-all duration-300"
-                    >
-                      <Key size={16} className="group-hover:scale-110 transition-transform duration-300" />
-                      <span className="truncate max-w-[180px]">Reset Password</span>
-                      <span className="text-xs text-purple-400 group-hover:text-purple-500 ml-auto">
-                        {form.email.split('@')[0]}
-                      </span>
-                    </button>
-                  </div>
-                )}
+  {/* Reset Password Button */}
+  {isEditMode && (
+    <div className="pt-2 border-t border-gray-100">
+      <button
+        type="button"
+        onClick={() => handleOpenResetPasswordPage({
+          email: form.email,
+          firstName: form.firstName,
+          lastName: form.lastName
+        })}
+        className="group w-full inline-flex items-center justify-center gap-2 text-xs text-purple-600 hover:text-purple-700 font-medium py-2 px-3 border border-purple-100 rounded-lg hover:border-purple-300 hover:bg-purple-50/50 transition-all duration-300"
+      >
+        <Lock size={12} className="group-hover:scale-110 transition-transform duration-300" />
+        <span className="truncate">Admin: Reset Password</span>
+        {adminEmail && (
+          <span className="text-[10px] text-purple-400 group-hover:text-purple-500 ml-auto">
+            {adminEmail.split('@')[0]}
+          </span>
+        )}
+      </button>
+    </div>
+  )}
 
-                <button
-                  type="submit"
-                  disabled={formLoading}
-                  className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3.5 rounded-xl font-semibold hover:opacity-90 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
-                >
-                  {formLoading ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      {isEditMode ? "Updating..." : "Creating..."}
-                    </>
-                  ) : (
-                    <>
-                      {isEditMode ? (
-                        <>
-                          <CheckCircle size={20} />
-                          Update User
-                        </>
-                      ) : (
-                        <>
-                          <UserPlus size={20} />
-                          Create Employee
-                        </>
-                      )}
-                    </>
-                  )}
-                </button>
+  <button
+    type="submit"
+    disabled={formLoading}
+    className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-2.5 rounded-lg font-semibold hover:opacity-90 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm shadow-md hover:shadow-lg"
+  >
+    {formLoading ? (
+      <>
+        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+        {isEditMode ? "Updating..." : "Creating..."}
+      </>
+    ) : (
+      <>
+        {isEditMode ? (
+          <>
+            <CheckCircle size={16} />
+            Update User
+          </>
+        ) : (
+          <>
+            <UserPlus size={16} />
+            Create Employee
+          </>
+        )}
+      </>
+    )}
+  </button>
 
-                {isEditMode && (
-                  <button
-                    type="button"
-                    onClick={resetForm}
-                    className="w-full border-2 border-gray-200 text-gray-700 py-3 rounded-xl font-medium hover:bg-gray-50 transition-all duration-300"
-                  >
-                    Cancel Edit
-                  </button>
-                )}
-              </form>
+  {isEditMode && (
+    <button
+      type="button"
+      onClick={resetForm}
+      className="w-full border border-gray-200 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition-all duration-300 text-sm"
+    >
+      Cancel Edit
+    </button>
+  )}
+</form>
             </div>
           </div>
         </div>
